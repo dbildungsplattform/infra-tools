@@ -5,6 +5,12 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+permissions:
+  security-events: write
+  actions: read
+  contents: read
+  packages: read
+
 jobs:
   trivy_image_scan_cron:
     strategy:
@@ -18,15 +24,7 @@ jobs:
           - docops
           - cron-tools
           - cron-tools-debian
-    
-    runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      actions: read
-      contents: read
-      packages: read
-    
-    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
     uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@d3c41733ad624bf26d60979a8fccacfa1c750385
     with:
       image_ref: "ghcr.io/dbildungsplattform/${{ matrix.image }}:latest"
