@@ -25,7 +25,7 @@ jobs:
           - cron-tools
           - cron-tools-debian
 
-    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@8
+    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/image-publish-trivy.yaml@094a0e74897bef119a5a8fc73da781ff1f2274e6 # 8.4.2
     with:
       image_ref: "ghcr.io/dbildungsplattform/${{ matrix.image }}:latest"
       severity: "CRITICAL,HIGH"
