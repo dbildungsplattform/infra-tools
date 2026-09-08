@@ -27,7 +27,7 @@ jobs:
       packages: read
     
     steps:
-    - uses: actions/checkout@v4
-    - uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@4b5c0434f28b537e9199ffebc21f4e6e39cbcdde # 8.4.3
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@d3c41733ad624bf26d60979a8fccacfa1c750385
       with:
         image_ref: "ghcr.io/dbildungsplattform/${{ matrix.image }}:latest"
