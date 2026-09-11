@@ -28,3 +28,7 @@ jobs:
     uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@4b5c0434f28b537e9199ffebc21f4e6e39cbcdde # 8.4.3
     with:
       image_ref: "ghcr.io/dbildungsplattform/${{ matrix.image }}:latest"
+      severity: "CRITICAL,HIGH"
+      fail_on_vulnerabilites: true
+      ignore-unfixed: true
+      limit-severities-for-sarif: false
