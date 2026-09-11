@@ -16,7 +16,7 @@ jobs:
       packages: write
       security-events: write
       contents: read
-    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/image-publish-trivy.yaml@8
+    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/image-publish-trivy.yaml4b5c0434f28b537e9199ffebc21f4e6e39cbcdde # 8.4.3
     with:
       image_name: "cron-tools-debian"
       context: "./cron-tools-debian/"
