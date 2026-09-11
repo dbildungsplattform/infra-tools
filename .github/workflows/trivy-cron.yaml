@@ -25,6 +25,6 @@ jobs:
           - cron-tools
           - cron-tools-debian
 
-    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@9512523aad66da194f6734158735c414b17b2e47
+    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/check-trivy.yaml@4b5c0434f28b537e9199ffebc21f4e6e39cbcdde # 8.4.3
     with:
       image_ref: "ghcr.io/dbildungsplattform/${{ matrix.image }}:latest"

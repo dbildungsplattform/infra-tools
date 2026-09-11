@@ -17,7 +17,7 @@ jobs:
       packages: write
       security-events: write
       contents: read
-    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/image-publish-trivy.yaml@094a0e74897bef119a5a8fc73da781ff1f2274e6 # 8.4.2
+    uses: dbildungsplattform/dbp-github-workflows/.github/workflows/image-publish-trivy.yaml4b5c0434f28b537e9199ffebc21f4e6e39cbcdde # 8.4.3
     with:
       image_name: "infra-tools"
       context: "./infra-tools/"
