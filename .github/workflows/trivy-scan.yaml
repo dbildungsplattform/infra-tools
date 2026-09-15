@@ -7,6 +7,10 @@ on:
         description: "repository image reference"
         required: true
         type: string
+      image:
+        description: "image name"
+        required: false
+        type: string
 
 jobs:
   build:
@@ -54,3 +58,6 @@ jobs:
         with:
           name: "trivy-sbom-report"
           path: '${{ github.workspace }}/dependency-results.sbom.json'
+          name: "trivy-sbom-report-${{ inputs.image }}"
+          path: '${{ github.workspace }}/dependency-results-${{ inputs.image }}.sbom.json'
+
