@@ -38,7 +38,7 @@ jobs:
   generate-helm-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dbildungsplattform/infra-tools/.github/actions/helm-docs@tf-helm-docs-v1
         with: 
           # provide list of dirs to run helm-docs on, separate by comma without a space
