@@ -22,7 +22,7 @@ jobs:
       image_name: "cron-tools"
       context: "./cron-tools/"
       image_tag_generation: "specified"
-      image_tag: "scheduled-1.0.{{date 'YYYYMMDD'}}"
+      image_tag: "scheduled-1.0.{{date 'YYMMDD'}}"
       add_latest_tag: false
       container_registry: "ghcr.io"
       run_trivy_scan: true
