@@ -11,7 +11,7 @@ RUN set -x \
     && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc > /etc/apt/trusted.gpg.d/postgres.asc \
     && apt-get -y update \
     && apt-get -y install \
-        postgresql-client-15 \
+        postgresql-client-18 \
         mariadb-client \
         jq \
         openssl \
