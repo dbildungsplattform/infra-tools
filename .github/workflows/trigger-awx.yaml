@@ -6,7 +6,7 @@ on:
     inputs:
       awxkit_version:
         description: "Version of awxkit to use"
-        required: false
+        required: true
         default: 23.2.0
         type: string
       host:
@@ -52,7 +52,7 @@ on:
     inputs:
       awxkit_version:
         description: "Version of awxkit to use"
-        required: false
+        required: true
         default: 23.2.0
         type: string
       host:
