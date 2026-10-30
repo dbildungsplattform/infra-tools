@@ -7,7 +7,7 @@ on:
       awxkit_version:
         description: "Version of awxkit to use"
         required: false
-        default: 23.2.0
+        default: 24.6.1
         type: string
       host:
         description: "The AWX host to trigger"
@@ -48,8 +48,6 @@ on:
       AWX_TOKEN:
         required: true
   workflow_dispatch:
-  pull_request:
-
 
 jobs:
   run_awx:
