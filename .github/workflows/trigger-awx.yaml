@@ -7,7 +7,7 @@ on:
       awxkit_version:
         description: "Version of awxkit to use"
         required: false
-        default: 24.6.1
+        default: 23.2.0
         type: string
       host:
         description: "The AWX host to trigger"
@@ -15,6 +15,7 @@ on:
         default: "http://localhost:8081"
         type: string
       port_forward:
+        description: "Connect via k8s port forward?"
         required: false
         default: true
         type: boolean
@@ -48,6 +49,51 @@ on:
       AWX_TOKEN:
         required: true
   workflow_dispatch:
+    inputs:
+      awxkit_version:
+        description: "Version of awxkit to use"
+        required: false
+        default: 23.2.0
+        type: string
+      host:
+        description: "The AWX host to trigger"
+        required: false
+        default: "http://localhost:8081"
+        type: string
+      port_forward:
+        description: "Connect via k8s port forward?"
+        required: false
+        default: true
+        type: boolean
+      job_id:
+        description: "The ID of the AWX job to trigger"
+        required: true
+        type: string
+      # The following inputs allow overriding job settings, this only works if the AWX job allows this, otherwise they are ignored
+      # When using this keep in mind what an attacker could do with a compromised token and setup your jobs to restrict this as much as possible
+      job_type:
+        description: "Playbook run or check"
+        required: false
+        default: run
+        type: string
+      limit:
+        description: "Optional limit override, if empty uses the job default, not all hosts"
+        required: false
+        default: ''
+        type: string
+      scm_branch:
+        description: "Optional branch override"
+        required: false
+        default: ""
+        type: string
+      extra_vars:
+        description: "Optional extra variables, must be valid json"
+        required: false
+        default: ""
+        type: string
+    secrets:
+      AWX_TOKEN:
+        required: true
 
 jobs:
   run_awx:
