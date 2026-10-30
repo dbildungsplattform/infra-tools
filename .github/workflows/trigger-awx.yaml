@@ -48,6 +48,8 @@ on:
       AWX_TOKEN:
         required: true
   workflow_dispatch:
+  pull_request:
+
 
 jobs:
   run_awx:
