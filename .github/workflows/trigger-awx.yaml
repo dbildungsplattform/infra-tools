@@ -12,8 +12,12 @@ on:
       host:
         description: "The AWX host to trigger"
         required: false
-        default: "https://awx.dbildungsplattform.de"
+        default: "http://localhost:8081"
         type: string
+      port_forward:
+        required: false
+        default: true
+        type: boolean
       job_id:
         description: "The ID of the AWX job to trigger"
         required: true
@@ -43,6 +47,7 @@ on:
     secrets:
       AWX_TOKEN:
         required: true
+  workflow_dispatch:
 
 jobs:
   run_awx:
@@ -66,6 +71,22 @@ jobs:
           EXTRA_VARS: ${{ inputs.extra_vars }}
         run: echo "EXTRA_VARS_FLAG=--extra_vars $(echo $EXTRA_VARS | jq -c .)" >> $GITHUB_ENV
         if: ${{ inputs.extra_vars != '' }}
+
+      - name: Add kubeconfig
+        if: ${{ inputs.port_forward }}
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.AWX_PORT_FORWARD_KUBECONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBECONFIG_CONTENT" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Create tunnel to AWX
+        if: ${{ inputs.port_forward }}
+        run: |
+          kubectl port-forward -n awx svc/awx-service 8081:80 &
+          disown
+
       - name: Run the job
         env:
           TOWER_HOST: ${{ inputs.host }}
@@ -75,4 +96,4 @@ jobs:
           set -o pipefail
           # Only keep job URL, job status and detail which contains error messages
           # We don't use the awx jq output format because it doesn't show error messages
-          awx job_template launch ${{ inputs.job_id }} --job_type ${{ inputs.job_type }} $LIMIT_FLAG $SCM_BRANCH_FLAG $EXTRA_VARS_FLAG --wait --interval 10 | jq '{"url": "https://awx.dbildungsplattform.de/#/jobs/\(.job)", "status": .status, "detail": .detail }'
+          awx job_template launch ${{ inputs.job_id }} --job_type ${{ inputs.job_type }} $LIMIT_FLAG $SCM_BRANCH_FLAG $EXTRA_VARS_FLAG --wait --interval 10 | jq '{"url": "${{ inputs.host }}/#/jobs/\(.job)", "status": .status, "detail": .detail }'
