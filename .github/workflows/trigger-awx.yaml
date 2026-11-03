@@ -136,6 +136,7 @@ jobs:
         run: |
           kubectl port-forward -n awx svc/awx-service 8081:80 &
           disown
+          sleep 10
 
       - name: Run the job
         env:
