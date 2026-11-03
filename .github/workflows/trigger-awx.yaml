@@ -48,6 +48,8 @@ on:
     secrets:
       AWX_TOKEN:
         required: true
+      AWX_PORT_FORWARD_KUBECONFIG:
+        required: false
   workflow_dispatch:
     inputs:
       awxkit_version:
@@ -94,6 +96,8 @@ on:
     secrets:
       AWX_TOKEN:
         required: true
+      AWX_PORT_FORWARD_KUBECONFIG:
+        required: false
 
 jobs:
   run_awx:
