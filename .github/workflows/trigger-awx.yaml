@@ -99,4 +99,4 @@ jobs:
           set -o pipefail
           # Only keep job URL, job status and detail which contains error messages
           # We don't use the awx jq output format because it doesn't show error messages
-          awx job_template launch ${{ inputs.job_id }} --job_type ${{ inputs.job_type }} $LIMIT_FLAG $SCM_BRANCH_FLAG $EXTRA_VARS_FLAG --wait --interval 10 | jq '{"url": "${{ inputs.host }}/#/jobs/\(.job)", "status": .status, "detail": .detail }'
+          awx job_template launch ${{ inputs.job_id }} --job_type ${{ inputs.job_type }} $LIMIT_FLAG $SCM_BRANCH_FLAG $EXTRA_VARS_FLAG --wait --interval 10 | jq --arg host "$TOWER_HOST" '{"url": "\($host)/#/jobs/\(.job)", "status": .status, "detail": .detail }'
