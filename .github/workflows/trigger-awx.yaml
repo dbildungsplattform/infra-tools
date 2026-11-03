@@ -17,7 +17,7 @@ on:
       port_forward:
         description: "Connect via k8s port forward?"
         required: false
-        default: true
+        default: false
         type: boolean
       job_id:
         description: "The ID of the AWX job to trigger"
