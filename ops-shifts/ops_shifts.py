@@ -677,33 +677,43 @@ class OpsShiftsManager:
         events: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Builds a rich Adaptive Card JSON payload displaying both Primary and Backup.
+        Builds a rich Adaptive Card JSON payload in German displaying both Primary and Backup.
         """
         teams_conf = self.config.get("teams", {})
         confluence_conf = self.config.get("confluence", {})
         cal_url = confluence_conf.get("calendar_page_url", "")
-        runbook_url = teams_conf.get("runbook_url", "")
+        betriebsaufgaben_url = teams_conf.get("betriebsaufgaben_url")
 
-        today_str = self.now.strftime("%A, %b %d, %Y")
-        title = "🔄 SRE On-Call Shift Handoff" if is_handoff_day else "☀️ SRE Daily On-Call"
+        GERMAN_WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+        GERMAN_MONTHS = ["", "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+        GERMAN_MONTHS_SHORT = ["", "Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."]
+
+        weekday_name = GERMAN_WEEKDAYS[self.now.weekday()]
+        month_name = GERMAN_MONTHS[self.now.month]
+        today_str = f"{weekday_name}, {self.now.day:02d}. {month_name} {self.now.year}"
+
+        title = "🔄 OPS-Tätigkeiten Schichtwechsel" if is_handoff_day else "☀️ OPS-Tätigkeiten Tagesübersicht"
+        subtitle = "Täglicher Statusbericht und wöchentliche Bereitschaftsübersicht für das SRE-Team."
         accent_color = "warning" if is_handoff_day else "default"
 
-        curr_start = dt.date.fromisoformat(current_shift["start_date"]).strftime("%b %d")
-        curr_end = dt.date.fromisoformat(current_shift["end_date"]).strftime("%b %d, %Y")
+        curr_start_dt = dt.date.fromisoformat(current_shift["start_date"])
+        curr_end_dt = dt.date.fromisoformat(current_shift["end_date"])
+        curr_start = f"{curr_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_start_dt.month]}"
+        curr_end = f"{curr_end_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_end_dt.month]} {curr_end_dt.year}"
 
         primary_str = f"**{current_shift['engineer']}** ({current_shift.get('email', '')})"
-        backup_str = f"**{current_shift.get('backup', 'None')}** ({current_shift.get('backup_email', '')})"
+        backup_str = f"**{current_shift.get('backup', 'Keiner')}** ({current_shift.get('backup_email', '')})"
         next_str = (
-            f"**{next_preview['engineer']}** (Primary) | "
-            f"**{next_preview.get('backup', 'None')}** (Backup)"
+            f"**{next_preview['engineer']}** (Primär) | "
+            f"**{next_preview.get('backup', 'Keiner')}** (Backup)"
         )
 
         facts = [
-            {"title": "Today's Date:", "value": today_str},
-            {"title": "Primary On-Call:", "value": primary_str},
-            {"title": "Backup On-Call:", "value": backup_str},
-            {"title": "Active Shift Window:", "value": f"{curr_start} – {curr_end}"},
-            {"title": "Next Up (Next Week):", "value": next_str},
+            {"title": "Datum:", "value": today_str},
+            {"title": "Bereitschaft (Primär):", "value": primary_str},
+            {"title": "Bereitschaft (Backup):", "value": backup_str},
+            {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_end}"},
+            {"title": "Nächste Woche (Vorschau):", "value": next_str},
         ]
 
         # Summarize team members on leave/travel during this week
@@ -712,9 +722,13 @@ class OpsShiftsManager:
         vacations_now = []
         for ev in events:
             if max(ev["start"], shift_start) <= min(ev["end"], shift_end):
-                vacations_now.append(f"• {ev.get('summary', 'Leave')} ({ev['start']} to {ev['end']})")
+                ev_s = ev["start"]
+                ev_e = ev["end"]
+                ev_s_str = f"{ev_s.day:02d}.{ev_s.month:02d}."
+                ev_e_str = f"{ev_e.day:02d}.{ev_e.month:02d}.{ev_e.year}"
+                vacations_now.append(f"• {ev.get('summary', 'Urlaub')} ({ev_s_str} bis {ev_e_str})")
 
-        vacation_text = "\n".join(vacations_now) if vacations_now else "No recorded leave or travel conflicts this week."
+        vacation_text = "\n".join(vacations_now) if vacations_now else "Keine eingetragenen Abwesenheiten oder Urlaube für diese Woche."
 
         body: List[Dict[str, Any]] = [
             {
@@ -730,7 +744,7 @@ class OpsShiftsManager:
                     },
                     {
                         "type": "TextBlock",
-                        "text": "Daily status report and weekly shift rotation briefing for the SRE team.",
+                        "text": subtitle,
                         "isSubtle": True,
                         "spacing": "None",
                     },
@@ -743,7 +757,7 @@ class OpsShiftsManager:
             },
             {
                 "type": "TextBlock",
-                "text": "**🌴 Team Leave & Travel Status (Confluence)**",
+                "text": "**🌴 Abwesenheiten & Urlaub im Team (Confluence)**",
                 "weight": "Bolder",
                 "spacing": "Medium",
             },
@@ -757,7 +771,7 @@ class OpsShiftsManager:
 
         notes = []
         if current_shift.get("note"):
-            notes.append(f"Primary: {current_shift['note']}")
+            notes.append(f"Primär: {current_shift['note']}")
         if current_shift.get("backup_note") and "Warning" in current_shift["backup_note"]:
             notes.append(f"Backup: {current_shift['backup_note']}")
 
@@ -773,14 +787,14 @@ class OpsShiftsManager:
         if cal_url:
             actions.append({
                 "type": "Action.OpenUrl",
-                "title": "📅 View SRE Calendar",
+                "title": "📅 SRE-Kalender öffnen",
                 "url": cal_url,
             })
-        if runbook_url:
+        if betriebsaufgaben_url:
             actions.append({
                 "type": "Action.OpenUrl",
-                "title": "📖 Open SRE Runbooks",
-                "url": runbook_url,
+                "title": "📋 Betriebsaufgaben öffnen",
+                "url": betriebsaufgaben_url,
             })
 
         card_payload = {

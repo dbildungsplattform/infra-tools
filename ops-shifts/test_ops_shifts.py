@@ -25,7 +25,7 @@ confluence:
 
 teams:
   channel_name: "SRE Channel"
-  runbook_url: "https://docs.dbildungscloud.de/runbooks"
+  betriebsaufgaben_url: "https://docs.dbildungscloud.de/betriebsaufgaben"
 
 rotation:
   timezone: "Europe/Berlin"
@@ -269,6 +269,62 @@ team:
         with open(self.state_path, "r", encoding="utf-8") as f:
             saved = json.load(f)
         self.assertIn("backup", saved["current_shift"])
+
+    def test_german_adaptive_card_structure(self):
+        """Verify the Teams card is correctly localized in German with Betriebsaufgaben link."""
+        manager = OpsShiftsManager(
+            config_path=self.config_path,
+            state_path=self.state_path,
+            dry_run=True,
+            simulated_now=dt.datetime(2026, 11, 4, 8, 30),
+        )
+
+        current_shift = {
+            "engineer": "Alice Developer",
+            "email": "alice@dbildungscloud.de",
+            "backup": "Bob Sysadmin",
+            "backup_email": "bob@dbildungscloud.de",
+            "start_date": "2026-11-02",
+            "end_date": "2026-11-09",
+        }
+        next_preview = {
+            "engineer": "Bob Sysadmin",
+            "email": "bob@dbildungscloud.de",
+            "backup": "Charlie SRE",
+            "backup_email": "charlie@dbildungscloud.de",
+            "start_date": "2026-11-09",
+            "end_date": "2026-11-16",
+        }
+        events = [
+            {
+                "summary": "Charlie SRE - Urlaub",
+                "start": dt.date(2026, 11, 4),
+                "end": dt.date(2026, 11, 6),
+            }
+        ]
+
+        card = manager.build_teams_adaptive_card(
+            current_shift=current_shift,
+            next_preview=next_preview,
+            is_handoff_day=False,
+            events=events,
+        )
+
+        card_json = json.dumps(card, ensure_ascii=False)
+
+        # Check German titles and labels
+        self.assertIn("☀️ OPS-Tätigkeiten Tagesübersicht", card_json)
+        self.assertIn("Bereitschaft (Primär):", card_json)
+        self.assertIn("Bereitschaft (Backup):", card_json)
+        self.assertIn("Aktuelle Schicht:", card_json)
+        self.assertIn("Nächste Woche (Vorschau):", card_json)
+        self.assertIn("Mittwoch, 04. November 2026", card_json)
+        self.assertIn("02. Nov. – 09. Nov. 2026", card_json)
+        self.assertIn("Abwesenheiten & Urlaub im Team", card_json)
+
+        # Check button actions and Betriebsaufgaben link
+        self.assertIn("📅 SRE-Kalender öffnen", card_json)
+        self.assertIn("📋 Betriebsaufgaben öffnen", card_json)
 
 
 if __name__ == "__main__":

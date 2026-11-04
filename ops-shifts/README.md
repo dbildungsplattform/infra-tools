@@ -24,7 +24,7 @@ Automated on-call shift rotation and daily Microsoft Teams notification bot for 
   - **Active Shift Window**: e.g., `Nov 02 – Nov 09`
   - **Next Up (Next Week)**: Preview of next week's Primary and Backup
   - **Team Leave & Travel Status**: Summary of team members currently absent
-  - Direct links to the Confluence calendar and SRE runbooks.
+  - Direct links to the Confluence calendar and Betriebsaufgaben.
 
 ---
 
@@ -53,7 +53,7 @@ confluence:
 
 teams:
   channel_name: "SRE Operations"
-  runbook_url: "https://docs.dbildungscloud.de/spaces/ST/pages/534937640/SRE+Betriebsaufgaben+OPS"
+  betriebsaufgaben_url: "https://docs.dbildungscloud.de/spaces/ST/pages/534937640/SRE+Betriebsaufgaben+OPS"
 
 rotation:
   timezone: "Europe/Berlin"

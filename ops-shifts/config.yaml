@@ -8,7 +8,7 @@ confluence:
 
 teams:
   channel_name: "SRE Operations"
-  runbook_url: "https://docs.dbildungscloud.de/spaces/ST/pages/534937640/SRE+Betriebsaufgaben+OPS"
+  betriebsaufgaben_url: "https://docs.dbildungscloud.de/spaces/ST/pages/534937640/SRE+Betriebsaufgaben+OPS"
 
 rotation:
   timezone: "Europe/Berlin"
@@ -32,13 +32,18 @@ vacation:
     - "abwesend"
     - "pto"
     - "holiday"
+    - "holidays"
   # Non-absence event types to ignore
   ignore_keywords:
     - "birthday"
     - "geburtstag"
     - "meeting"
     - "retro"
+    - "refinement"
+    - "daily"
     - "intern"
+    - "quarter cap"
+    - "pi "
 
 # Team members participating in the on-call rotation.
 # 'aliases' are matched against Confluence calendar event summaries/attendees (case-insensitive).
