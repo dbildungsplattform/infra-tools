@@ -129,10 +129,13 @@ In repository settings under **Settings → Secrets and variables → Actions**:
 python3 -m unittest ops-shifts/test_ops_shifts.py
 
 # Simulate Monday morning Schichtwechsel (dry-run)
-python3 ops-shifts/ops_shifts.py --dry-run --mock-calendar --current-time 2026-11-09T06:00:00
+python3 ops-shifts/ops_shifts.py --dry-run --card-type schichtwechsel
 
-# Simulate Friday morning Forecast (dry-run)
-python3 ops-shifts/ops_shifts.py --dry-run --mock-calendar --current-time 2026-11-06T06:00:00
+# Simulate Friday morning Vorschau (dry-run)
+python3 ops-shifts/ops_shifts.py --dry-run --card-type vorschau
+
+# Simulate mid-week Übersicht (dry-run)
+python3 ops-shifts/ops_shifts.py --dry-run --card-type uebersicht
 
 # Live run with real credentials
 export CONFLUENCE_PAT="your-token"

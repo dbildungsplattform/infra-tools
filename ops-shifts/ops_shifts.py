@@ -67,14 +67,14 @@ class OpsShiftsManager:
         state_path: Path,
         dry_run: bool = False,
         force_rotation: bool = False,
-        mock_calendar: bool = False,
+        card_type: str = "auto",
         simulated_now: Optional[dt.datetime] = None,
     ):
         self.config_path = config_path
         self.state_path = state_path
         self.dry_run = dry_run
         self.force_rotation = force_rotation
-        self.mock_calendar = mock_calendar
+        self.card_type = card_type
         self.config = self._load_config()
 
         self.calendar_unreachable = False
@@ -155,10 +155,6 @@ class OpsShiftsManager:
         First tries .ics export endpoint, falls back to events.json if available.
         Flags self.calendar_unreachable if Confluence fails.
         """
-        if self.mock_calendar:
-            logger.info("Using mock calendar data (flag --mock-calendar set).")
-            return self._generate_mock_events(window_start, window_end)
-
         confluence_conf = self.config.get("confluence", {})
         base_url = confluence_conf.get("base_url", "").rstrip("/")
         cal_id = confluence_conf.get("calendar_id", "")
@@ -168,8 +164,9 @@ class OpsShiftsManager:
         password = os.environ.get("CONFLUENCE_PASSWORD")
 
         if not token and not (user and password):
-            logger.warning("No CONFLUENCE_PAT provided. Falling back to mock calendar data.")
-            return self._generate_mock_events(window_start, window_end)
+            logger.error("CONFLUENCE_PAT (or user/password) is not configured! Cannot fetch Confluence calendar.")
+            self.calendar_unreachable = True
+            return []
 
         headers = {}
         if token:
@@ -363,39 +360,6 @@ class OpsShiftsManager:
                 logger.debug(f"Skipping unparseable event {item}: {e}")
         logger.info(f"Parsed {len(parsed)} calendar events from events.json.")
         return parsed
-
-    def _generate_mock_events(self, window_start: dt.date, window_end: dt.date) -> List[Dict[str, Any]]:
-        team = self.config.get("team", [])
-        if not team:
-            return []
-
-        events = []
-        first_member = team[0]["name"]
-        vac_start = window_start + dt.timedelta(days=7)
-        vac_end = vac_start + dt.timedelta(days=5)
-        events.append({
-            "summary": f"{first_member} - Leave (planned)",
-            "description": "Annual vacation",
-            "categories": ["Leave (planned)"],
-            "attendees": [first_member],
-            "start": vac_start,
-            "end": vac_end,
-        })
-
-        if len(team) > 1:
-            second_member = team[1]["name"]
-            travel_start = window_start + dt.timedelta(days=1)
-            travel_end = travel_start + dt.timedelta(days=2)
-            events.append({
-                "summary": f"Conference Travel: {second_member}",
-                "description": "KubeCon attendance",
-                "categories": ["Travel"],
-                "attendees": [second_member],
-                "start": travel_start,
-                "end": travel_end,
-            })
-
-        return events
 
     # =========================================================================
     # Scheduling, Vacation Filtering & Fallback Engine
@@ -801,7 +765,8 @@ class OpsShiftsManager:
         next_primary_str = f"**{next_preview['engineer']}** ({next_preview.get('email', '')})"
         next_backup_str = f"**{next_preview.get('backup', 'Keiner')}** ({next_preview.get('backup_email', '')})"
 
-        if is_friday:
+        effective_mode = (self.card_type or "auto").lower()
+        if effective_mode == "vorschau" or (effective_mode == "auto" and is_friday):
             title = "🔮 SRE Betriebsaufgaben: Vorschau"
             subtitle = "Vorschau auf die Folgewoche"
             accent_color = "accent"
@@ -809,6 +774,7 @@ class OpsShiftsManager:
                 {"title": "Datum:", "value": today_str},
                 {"title": "Aktuell zuständig:", "value": primary_str},
                 {"title": "Aktuell im Backup:", "value": backup_str},
+                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_work_end} (Dienstschluss)"},
                 {"title": "Nächste Woche zuständig:", "value": next_primary_str},
                 {"title": "Nächste Woche im Backup:", "value": next_backup_str},
                 {"title": "Nächste Schicht:", "value": f"{next_start} – {next_work_end}"},
@@ -817,7 +783,7 @@ class OpsShiftsManager:
             # In Friday forecast, show vacations for the upcoming week
             shift_start_filter = next_start_dt
             shift_end_filter = next_work_end_dt
-        elif is_monday or is_handoff_day:
+        elif effective_mode == "schichtwechsel" or (effective_mode == "auto" and (is_monday or is_handoff_day)):
             title = "🔄 SRE Betriebsaufgaben: Schichtwechsel"
             subtitle = "Wöchentliche Schichtübergabe"
             accent_color = "warning"
@@ -1101,9 +1067,11 @@ def main():
         help="Force rotating to the next shift even if the current shift is active.",
     )
     parser.add_argument(
-        "--mock-calendar",
-        action="store_true",
-        help="Use mock vacation calendar data instead of calling Confluence.",
+        "--card-type",
+        type=str,
+        default="auto",
+        choices=["auto", "uebersicht", "schichtwechsel", "vorschau"],
+        help="Notification template: auto (weekday-based), uebersicht, schichtwechsel, or vorschau.",
     )
     parser.add_argument(
         "--current-time",
@@ -1123,7 +1091,7 @@ def main():
         state_path=args.state,
         dry_run=args.dry_run,
         force_rotation=args.force_rotation,
-        mock_calendar=args.mock_calendar,
+        card_type=args.card_type,
         simulated_now=simulated_now,
     )
     sys.exit(manager.run())

@@ -1,4 +1,4 @@
-name: SRE On-Call Shift Rotation & Teams Notifier
+name: OPS Shift Rotation & Teams Notifier
 
 on:
   schedule:
@@ -7,16 +7,21 @@ on:
     - cron: "0 5 * * 1,5"
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Dry run (do not post to Teams or update state)"
-        type: boolean
-        default: false
+      card_type:
+        description: "Kartentyp / Vorlage (auto = Wochentag-basiert: Mo=Schichtwechsel, Fr=Vorschau, sonst=Übersicht)"
+        type: choice
+        options:
+          - "auto"
+          - "uebersicht"
+          - "schichtwechsel"
+          - "vorschau"
+        default: "auto"
       force_rotation:
-        description: "Force shift rotation even if the current shift is still active"
+        description: "Schichtwechsel erzwingen (auch wenn aktuelle Schicht noch aktiv ist)"
         type: boolean
         default: false
-      mock_calendar:
-        description: "Use mock vacation calendar data instead of calling Confluence"
+      dry_run:
+        description: "Dry run (nur testen, weder Teams-Post noch State-Update)"
         type: boolean
         default: false
 
@@ -76,8 +81,8 @@ jobs:
           if [ "${{ inputs.force_rotation }}" = "true" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --force-rotation"
           fi
-          if [ "${{ inputs.mock_calendar }}" = "true" ]; then
-            EXTRA_ARGS="$EXTRA_ARGS --mock-calendar"
+          if [ -n "${{ inputs.card_type }}" ] && [ "${{ inputs.card_type }}" != "auto" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --card-type ${{ inputs.card_type }}"
           fi
 
           python ops-shifts/ops_shifts.py --config ops-shifts/config.yaml --state ops-shifts/state.json $EXTRA_ARGS
