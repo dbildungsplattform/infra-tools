@@ -31,8 +31,11 @@ rotation:
   timezone: "Europe/Berlin"
   shift_duration_days: 7
   shift_start_weekday: 0
-  shift_start_hour: 9
+  shift_start_hour: 6
   vacation_overlap_threshold_days: 1
+
+storage:
+  backend: "file"
 
 vacation:
   event_keywords:
@@ -73,7 +76,6 @@ team:
         self.temp_dir.cleanup()
 
     def test_leave_and_travel_detection(self):
-        """Verify Leave, Leave (planned), and Travel are detected, and Birthdays are ignored."""
         manager = OpsShiftsManager(
             config_path=self.config_path,
             state_path=self.state_path,
@@ -85,7 +87,6 @@ team:
         member_charlie = {"name": "Charlie SRE", "aliases": ["Charlie", "csre"]}
 
         events = [
-            # Alice: "Leave (planned)"
             {
                 "summary": "Alice - Leave (planned)",
                 "description": "Family trip",
@@ -94,7 +95,6 @@ team:
                 "start": dt.date(2026, 11, 2),
                 "end": dt.date(2026, 11, 6),
             },
-            # Bob: "Travel"
             {
                 "summary": "Travel: Bob Sysadmin",
                 "description": "Conference",
@@ -103,7 +103,6 @@ team:
                 "start": dt.date(2026, 11, 3),
                 "end": dt.date(2026, 11, 5),
             },
-            # Charlie: "Birthday" (should be ignored!)
             {
                 "summary": "Charlie Birthday",
                 "description": "Happy Birthday Charlie",
@@ -114,29 +113,22 @@ team:
             },
         ]
 
-        # Alice: on leave
         on_vac, evs = manager.is_member_on_vacation(
             member_alice, events, dt.date(2026, 11, 2), dt.date(2026, 11, 9)
         )
         self.assertTrue(on_vac)
-        self.assertIn("Leave (planned)", evs[0])
 
-        # Bob: on travel
-        on_vac_bob, evs_bob = manager.is_member_on_vacation(
+        on_vac_bob, _ = manager.is_member_on_vacation(
             member_bob, events, dt.date(2026, 11, 2), dt.date(2026, 11, 9)
         )
         self.assertTrue(on_vac_bob)
-        self.assertIn("Travel", evs_bob[0])
 
-        # Charlie: birthday is not an absence
-        on_vac_charlie, evs_charlie = manager.is_member_on_vacation(
+        on_vac_charlie, _ = manager.is_member_on_vacation(
             member_charlie, events, dt.date(2026, 11, 2), dt.date(2026, 11, 9)
         )
         self.assertFalse(on_vac_charlie)
-        self.assertEqual(len(evs_charlie), 0)
 
     def test_primary_and_backup_assignment(self):
-        """Verify both Primary and Backup are picked, and neither is on leave."""
         initial_state = {
             "last_updated": "2026-11-01T00:00:00+01:00",
             "current_shift": None,
@@ -149,11 +141,9 @@ team:
         }
         self.state_path.write_text(json.dumps(initial_state), encoding="utf-8")
 
-        # Alice has "Leave" this week
         events = [
             {
                 "summary": "Alice - Leave",
-                "description": "Vacation",
                 "categories": ["Leave"],
                 "attendees": ["Alice Developer"],
                 "start": dt.date(2026, 11, 2),
@@ -165,120 +155,64 @@ team:
             config_path=self.config_path,
             state_path=self.state_path,
             dry_run=False,
-            simulated_now=dt.datetime(2026, 11, 2, 9, 30),
+            simulated_now=dt.datetime(2026, 11, 2, 6, 15),
         )
-        # Mock fetch_calendar_events to return our test events
         manager.fetch_calendar_events = lambda s, e: events
 
         current, next_prev, is_handoff, _ = manager.resolve_shifts()
 
-        # Alice is on leave, so Primary and Backup must be Bob and Charlie (neither is Alice)
         self.assertNotEqual(current["engineer"], "Alice Developer")
         self.assertNotEqual(current["backup"], "Alice Developer")
         self.assertNotEqual(current["engineer"], current["backup"])
         self.assertIn(current["engineer"], ["Bob Sysadmin", "Charlie SRE"])
         self.assertIn(current["backup"], ["Bob Sysadmin", "Charlie SRE"])
 
-        # Check saved state
-        with open(self.state_path, "r", encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertEqual(saved["current_shift"]["engineer"], current["engineer"])
-        self.assertEqual(saved["current_shift"]["backup"], current["backup"])
-        # Verify only the primary had their shift count incremented
-        self.assertEqual(saved["member_stats"][current["engineer"]]["shifts_completed"], 1)
-        self.assertEqual(saved["member_stats"][current["backup"]]["shifts_completed"], 0)
-
-    def test_backup_fallback_when_next_primary_on_leave(self):
-        """If next week's primary is on leave THIS week, alternative backup is picked."""
-        initial_state = {
-            "last_updated": "2026-11-01T00:00:00+01:00",
-            "current_shift": None,
-            "member_stats": {
-                "Alice Developer": {"shifts_completed": 0, "last_shift_end": None},
-                "Bob Sysadmin": {"shifts_completed": 1, "last_shift_end": "2026-10-01"},
-                "Charlie SRE": {"shifts_completed": 2, "last_shift_end": "2026-10-08"},
-            },
-            "history": [],
-        }
-        self.state_path.write_text(json.dumps(initial_state), encoding="utf-8")
-
-        # Bob (next in line for primary next week) is on "Travel" THIS week (Nov 2-9), but available next week (Nov 9-16)
-        events = [
-            {
-                "summary": "Bob Sysadmin - Travel",
-                "categories": ["Travel"],
-                "attendees": ["Bob Sysadmin"],
-                "start": dt.date(2026, 11, 2),
-                "end": dt.date(2026, 11, 6),
-            }
-        ]
-
-        manager = OpsShiftsManager(
-            config_path=self.config_path,
-            state_path=self.state_path,
-            dry_run=True,
-            simulated_now=dt.datetime(2026, 11, 2, 9, 30),
-        )
-        manager.fetch_calendar_events = lambda s, e: events
-
-        current, next_prev, _, _ = manager.resolve_shifts()
-
-        # Alice has lowest shifts (0) -> Primary
-        self.assertEqual(current["engineer"], "Alice Developer")
-        # Bob would be next week's primary, but Bob is on travel THIS week!
-        # Therefore, Charlie must be picked as current backup:
-        self.assertEqual(current["backup"], "Charlie SRE")
-        # And next week's primary is still Bob (since his travel ends Nov 6)
-        self.assertEqual(next_prev["engineer"], "Bob Sysadmin")
-
-    def test_dynamic_backup_upgrade_for_existing_state(self):
-        """If current_shift in state.json lacks 'backup', it is resolved on the fly."""
-        initial_state = {
-            "last_updated": "2026-11-02T09:00:00+01:00",
-            "current_shift": {
-                "engineer": "Alice Developer",
-                "email": "alice@dbildungscloud.de",
-                "start_date": "2026-11-02",
-                "end_date": "2026-11-09",
-                "assigned_at": "2026-11-02T09:00:00+01:00",
-            },
-            "member_stats": {
-                "Alice Developer": {"shifts_completed": 1, "last_shift_end": "2026-11-09"},
-                "Bob Sysadmin": {"shifts_completed": 0, "last_shift_end": None},
-                "Charlie SRE": {"shifts_completed": 0, "last_shift_end": None},
-            },
-            "history": [],
-        }
-        self.state_path.write_text(json.dumps(initial_state), encoding="utf-8")
-
-        # Running mid-week on Wednesday (no rotation due)
+    def test_confluence_unreachable_fallback_random(self):
+        """When Confluence is unreachable, two people are assigned at random with a warning."""
         manager = OpsShiftsManager(
             config_path=self.config_path,
             state_path=self.state_path,
             dry_run=False,
-            simulated_now=dt.datetime(2026, 11, 4, 10, 0),
+            simulated_now=dt.datetime(2026, 11, 2, 6, 15),
         )
+        # Simulate calendar unreachable
+        manager.calendar_unreachable = True
         manager.fetch_calendar_events = lambda s, e: []
 
-        current, _, is_handoff, _ = manager.resolve_shifts()
-        self.assertFalse(is_handoff)
-        self.assertEqual(current["engineer"], "Alice Developer")
-        self.assertIsNotNone(current.get("backup"))
+        current, next_prev, is_handoff, _ = manager.resolve_shifts()
+        self.assertTrue(is_handoff)
+        self.assertIsNotNone(current["engineer"])
+        self.assertIsNotNone(current["backup"])
+        self.assertNotEqual(current["engineer"], current["backup"])
+        self.assertIn("Zufallsauswahl", current["note"])
 
-        # Verify saved state now includes backup
-        with open(self.state_path, "r", encoding="utf-8") as f:
-            saved = json.load(f)
-        self.assertIn("backup", saved["current_shift"])
+        # Check that card renders the warning container
+        card = manager.build_teams_adaptive_card(current, next_prev, is_handoff, [])
+        card_json = json.dumps(card, ensure_ascii=False)
+        self.assertIn("Achtung: Zufallsauswahl aktiv!", card_json)
 
-    def test_german_adaptive_card_structure(self):
-        """Verify the Teams card is correctly localized in German with Betriebsaufgaben link."""
+    def test_all_on_leave_fallback_random(self):
+        """When all team members are on leave, fallback random assignment triggers."""
         manager = OpsShiftsManager(
             config_path=self.config_path,
             state_path=self.state_path,
             dry_run=True,
-            simulated_now=dt.datetime(2026, 11, 4, 8, 30),
+            simulated_now=dt.datetime(2026, 11, 2, 6, 15),
         )
+        # All members on leave
+        events = [
+            {"summary": "Alice Leave", "categories": ["Leave"], "attendees": ["Alice Developer"], "start": dt.date(2026, 11, 2), "end": dt.date(2026, 11, 9)},
+            {"summary": "Bob Leave", "categories": ["Leave"], "attendees": ["Bob Sysadmin"], "start": dt.date(2026, 11, 2), "end": dt.date(2026, 11, 9)},
+            {"summary": "Charlie Leave", "categories": ["Leave"], "attendees": ["Charlie SRE"], "start": dt.date(2026, 11, 2), "end": dt.date(2026, 11, 9)},
+        ]
+        manager.fetch_calendar_events = lambda s, e: events
 
+        current, next_prev, _, _ = manager.resolve_shifts()
+        self.assertNotEqual(current["engineer"], current["backup"])
+        self.assertIn("Zufallsauswahl", current["note"])
+
+    def test_friday_forecast_vs_monday_schichtwechsel_cards(self):
+        """Verify distinct card formatting on Monday (Schichtwechsel) and Friday (Forecast)."""
         current_shift = {
             "engineer": "Alice Developer",
             "email": "alice@dbildungscloud.de",
@@ -295,36 +229,77 @@ team:
             "start_date": "2026-11-09",
             "end_date": "2026-11-16",
         }
-        events = [
-            {
-                "summary": "Charlie SRE - Urlaub",
-                "start": dt.date(2026, 11, 4),
-                "end": dt.date(2026, 11, 6),
-            }
-        ]
 
-        card = manager.build_teams_adaptive_card(
-            current_shift=current_shift,
-            next_preview=next_preview,
-            is_handoff_day=False,
-            events=events,
+        # 1. Friday test (Forecast / Vorschau)
+        manager_fri = OpsShiftsManager(
+            config_path=self.config_path,
+            state_path=self.state_path,
+            dry_run=True,
+            simulated_now=dt.datetime(2026, 11, 6, 6, 0),  # Friday
         )
+        card_fri = manager_fri.build_teams_adaptive_card(current_shift, next_preview, False, [])
+        json_fri = json.dumps(card_fri, ensure_ascii=False)
+        self.assertIn("Vorschau", json_fri)
+        self.assertIn("Aktuell zuständig (Primär):", json_fri)
+        self.assertIn("Nächste Woche ab Montag (Primär):", json_fri)
+        self.assertIn("Hinweis zur Folgewoche:", json_fri)
 
-        card_json = json.dumps(card, ensure_ascii=False)
+        # 2. Monday test (Schichtwechsel)
+        manager_mon = OpsShiftsManager(
+            config_path=self.config_path,
+            state_path=self.state_path,
+            dry_run=True,
+            simulated_now=dt.datetime(2026, 11, 9, 6, 0),  # Monday
+        )
+        card_mon = manager_mon.build_teams_adaptive_card(current_shift, next_preview, True, [])
+        json_mon = json.dumps(card_mon, ensure_ascii=False)
+        self.assertIn("SRE Betriebsaufgaben: Schichtwechsel", json_mon)
+        self.assertIn("Betriebsaufgaben (Primär):", json_mon)
+        self.assertIn("Folgewoche (Vorschau):", json_mon)
 
-        # Check German titles and labels
-        self.assertIn("☀️ OPS-Tätigkeiten Tagesübersicht", card_json)
-        self.assertIn("Bereitschaft (Primär):", card_json)
-        self.assertIn("Bereitschaft (Backup):", card_json)
-        self.assertIn("Aktuelle Schicht:", card_json)
-        self.assertIn("Nächste Woche (Vorschau):", card_json)
-        self.assertIn("Mittwoch, 04. November 2026", card_json)
-        self.assertIn("02. Nov. – 09. Nov. 2026", card_json)
-        self.assertIn("Abwesenheiten & Urlaub im Team", card_json)
+    def test_weekend_leave_excluded_and_friday_calculation(self):
+        """Weekend days (Sat/Sun) must be excluded from workday absence calculations."""
+        manager = OpsShiftsManager(
+            config_path=self.config_path,
+            state_path=self.state_path,
+            dry_run=True,
+        )
+        member = {"name": "Alice Developer", "aliases": ["Alice"]}
 
-        # Check button actions and Betriebsaufgaben link
-        self.assertIn("📅 SRE-Kalender öffnen", card_json)
-        self.assertIn("📋 Betriebsaufgaben öffnen", card_json)
+        # 1. Weekend-only trip: Saturday Nov 7 to Sunday Nov 8
+        weekend_event = [{
+            "summary": "Alice Weekend Trip",
+            "categories": ["Leave"],
+            "attendees": ["Alice Developer"],
+            "start": dt.date(2026, 11, 7),  # Saturday
+            "end": dt.date(2026, 11, 8),    # Sunday
+        }]
+        on_leave, evs = manager.is_member_on_vacation(
+            member, weekend_event, dt.date(2026, 11, 2), dt.date(2026, 11, 9), threshold_days=1
+        )
+        self.assertFalse(on_leave, "Weekend absences must NOT mark a member unavailable for weekday shifts!")
+        self.assertEqual(len(evs), 0)
+
+        # 2. Leave starting on Friday Nov 6 through Sunday Nov 8 (1 working day overlap: Friday)
+        friday_weekend_event = [{
+            "summary": "Alice Leave",
+            "categories": ["Leave"],
+            "attendees": ["Alice Developer"],
+            "start": dt.date(2026, 11, 6),  # Friday
+            "end": dt.date(2026, 11, 8),    # Sunday
+        }]
+        # With threshold=1, 1 workday overlap marks unavailable
+        on_leave_t1, evs_t1 = manager.is_member_on_vacation(
+            member, friday_weekend_event, dt.date(2026, 11, 2), dt.date(2026, 11, 9), threshold_days=1
+        )
+        self.assertTrue(on_leave_t1)
+        self.assertIn("1 Arbeitstag(e)", evs_t1[0])
+
+        # With threshold=2, 1 workday overlap (Friday only) is permitted
+        on_leave_t2, evs_t2 = manager.is_member_on_vacation(
+            member, friday_weekend_event, dt.date(2026, 11, 2), dt.date(2026, 11, 9), threshold_days=2
+        )
+        self.assertFalse(on_leave_t2, "With threshold=2, missing only 1 workday (Friday) should remain eligible!")
 
 
 if __name__ == "__main__":

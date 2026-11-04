@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-ops_shifts.py - SRE On-Call Shift Rotation & Teams Daily Notifier
+ops_shifts.py - SRE Betriebsaufgaben Shift Rotation & Teams Notifier
 
-Rotates on-call shifts on a weekly basis, checks Confluence Team Calendars
-for member leaves/vacations/travel to prevent overlaps fairly, assigns both
-a Primary and Backup on-call engineer, and notifies a Microsoft Teams channel
-daily with an Adaptive Card.
+Rotates weekly operational duty shifts (Betriebsaufgaben, Monday to Friday)
+among SRE team members fairly, checks Confluence Team Calendars for leaves/vacation
+during working days (excluding weekends), assigns both a Primary and Backup engineer,
+persists state to a local JSON file (caller-managed, e.g. via GitHub Variables in CI),
+includes random fallback assignment if Confluence is unreachable or candidates are
+unavailable, and sends notifications to Microsoft Teams on Mondays (Schichtwechsel)
+and Fridays (Forecast) at 06:00 CET.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import datetime as dt
 import json
 import logging
 import os
+import random
 import re
 import sys
 from pathlib import Path
@@ -73,7 +77,10 @@ class OpsShiftsManager:
         self.mock_calendar = mock_calendar
         self.config = self._load_config()
 
-        # Setup timezone
+        self.calendar_unreachable = False
+        self.fallback_triggered = False
+
+        # Setup timezone (Default: Europe/Berlin)
         tz_name = self.config.get("rotation", {}).get("timezone", "Europe/Berlin")
         if ZoneInfo is not None:
             self.local_tz = ZoneInfo(tz_name)
@@ -97,27 +104,42 @@ class OpsShiftsManager:
         with open(self.config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
 
-    def _load_state(self) -> Dict[str, Any]:
-        if self.state_path.exists():
-            try:
-                with open(self.state_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"Could not parse state file {self.state_path}: {e}. Initializing empty state.")
+    # =========================================================================
+    # State Persistence (Separation of Concerns: Local File I/O)
+    # =========================================================================
 
-        # Default initial state
-        return {
+    def _load_state(self) -> Dict[str, Any]:
+        default_state = {
             "last_updated": None,
             "current_shift": None,
             "member_stats": {},
             "history": [],
         }
 
+        if self.state_path.exists():
+            try:
+                with open(self.state_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        for k, v in default_state.items():
+                            loaded.setdefault(k, v)
+                        logger.info(f"Loaded state from {self.state_path}")
+                        return loaded
+            except Exception as e:
+                logger.warning(f"Could not parse state file {self.state_path}: {e}")
+
+        return default_state
+
     def _save_state(self) -> None:
         if self.dry_run:
             logger.info("[Dry Run] Skipping state persistence.")
             return
+
         self.state["last_updated"] = self.now.isoformat()
+        # Keep history trimmed to last 52 shifts to maintain lightweight state size
+        if "history" in self.state and len(self.state["history"]) > 52:
+            self.state["history"] = self.state["history"][-52:]
+
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.state_path, "w", encoding="utf-8") as f:
             json.dump(self.state, f, indent=2, ensure_ascii=False)
@@ -131,6 +153,7 @@ class OpsShiftsManager:
         """
         Fetch vacation and leave events from Confluence Team Calendar.
         First tries .ics export endpoint, falls back to events.json if available.
+        Flags self.calendar_unreachable if Confluence fails.
         """
         if self.mock_calendar:
             logger.info("Using mock calendar data (flag --mock-calendar set).")
@@ -145,7 +168,7 @@ class OpsShiftsManager:
         password = os.environ.get("CONFLUENCE_PASSWORD")
 
         if not token and not (user and password):
-            logger.warning("No CONFLUENCE_PAT or credentials provided in environment. Falling back to mock calendar.")
+            logger.warning("No CONFLUENCE_PAT provided. Falling back to mock calendar data.")
             return self._generate_mock_events(window_start, window_end)
 
         headers = {}
@@ -177,10 +200,11 @@ class OpsShiftsManager:
         except Exception as e:
             logger.error(f"Failed to fetch events.json from Confluence: {e}")
 
-        logger.warning("Could not retrieve calendar events from Confluence. Proceeding with empty vacation list.")
+        logger.error("Confluence calendar is unreachable! Triggering fallback mode.")
+        self.calendar_unreachable = True
         return []
 
-    def _http_get(self, url: str, headers: Dict[str, str], user: Optional[str], password: Optional[str]) -> Optional[bytes]:
+    def _http_get(self, url: str, headers: Dict[str, str], user: Optional[str] = None, password: Optional[str] = None) -> Optional[bytes]:
         if requests is not None:
             auth = (user, password) if user and password else None
             resp = requests.get(url, headers=headers, auth=auth, timeout=15)
@@ -247,7 +271,6 @@ class OpsShiftsManager:
             return self._parse_ics_fallback(ics_bytes.decode("utf-8", errors="ignore"), window_start, window_end)
 
     def _parse_ics_fallback(self, ics_text: str, window_start: dt.date, window_end: dt.date) -> List[Dict[str, Any]]:
-        """Lightweight regex-based fallback for environments without icalendar package."""
         unfolded = re.sub(r"\r?\n[ \t]", "", ics_text)
         events = []
         current: Optional[Dict[str, Any]] = None
@@ -260,7 +283,6 @@ class OpsShiftsManager:
                 if "start" in current:
                     if "end" not in current:
                         current["end"] = current["start"]
-                    # Check window intersection
                     if current["start"] <= window_end and current["end"] >= window_start:
                         events.append(current)
                 current = None
@@ -323,13 +345,11 @@ class OpsShiftsManager:
         return parsed
 
     def _generate_mock_events(self, window_start: dt.date, window_end: dt.date) -> List[Dict[str, Any]]:
-        """Simulates vacation, leave (planned), and travel events."""
         team = self.config.get("team", [])
         if not team:
             return []
 
         events = []
-        # First member: "Leave (planned)" during week 2
         first_member = team[0]["name"]
         vac_start = window_start + dt.timedelta(days=7)
         vac_end = vac_start + dt.timedelta(days=5)
@@ -342,7 +362,6 @@ class OpsShiftsManager:
             "end": vac_end,
         })
 
-        # Second member (if exists): "Travel" event in week 1
         if len(team) > 1:
             second_member = team[1]["name"]
             travel_start = window_start + dt.timedelta(days=1)
@@ -359,16 +378,12 @@ class OpsShiftsManager:
         return events
 
     # =========================================================================
-    # Fair Scheduling & Backup Engine
+    # Scheduling, Vacation Filtering & Fallback Engine
     # =========================================================================
 
     def _calculate_shift_window(self, ref_datetime: dt.datetime) -> Tuple[dt.date, dt.date]:
-        """
-        Calculates the start and end dates for a shift based on the configured weekday.
-        Default: Monday (0) to next Monday (0).
-        """
         rot_conf = self.config.get("rotation", {})
-        start_weekday = rot_conf.get("shift_start_weekday", 0)
+        start_weekday = rot_conf.get("shift_start_weekday", 0)  # 0 = Monday
         duration_days = rot_conf.get("shift_duration_days", 7)
 
         ref_date = ref_datetime.date()
@@ -385,15 +400,10 @@ class OpsShiftsManager:
         shift_end: dt.date,
         threshold_days: int = 1,
     ) -> Tuple[bool, List[str]]:
-        """
-        Checks if member has vacation, leave, leave (planned), or travel overlapping
-        with the given shift window.
-        Returns (is_on_vacation, matching_event_summaries).
-        """
         vac_conf = self.config.get("vacation", {})
         default_keywords = ["leave", "leave (planned)", "travel", "urlaub", "vacation", "abwesend", "pto", "holiday"]
         event_keywords = [k.lower() for k in vac_conf.get("event_keywords", default_keywords)]
-        default_ignores = ["birthday", "geburtstag", "meeting", "retro", "intern"]
+        default_ignores = ["birthday", "geburtstag", "meeting", "retro", "intern", "daily", "refinement", "pi ", "quarter cap"]
         ignore_keywords = [k.lower() for k in vac_conf.get("ignore_keywords", default_ignores)]
 
         name_patterns = [member["name"].lower()]
@@ -411,18 +421,15 @@ class OpsShiftsManager:
 
             combined_text = f"{summary} {description} {' '.join(categories)} {' '.join(attendees)}"
 
-            # 1. Skip ignored event types (e.g. Birthdays)
             if any(ign in summary or any(ign in cat for cat in categories) for ign in ignore_keywords):
                 continue
 
-            # 2. Check if this member is identified in the event
             member_matched = (
                 any(p in summary for p in name_patterns)
                 or any(p in description for p in name_patterns)
                 or any(any(p in a for p in name_patterns) for a in attendees)
             )
 
-            # 3. Check if event represents Leave / Travel / Vacation
             is_leave_event = (
                 any(kw in summary for kw in event_keywords)
                 or any(kw in description for kw in event_keywords)
@@ -434,16 +441,49 @@ class OpsShiftsManager:
                 ev_start = ev["start"]
                 ev_end = ev["end"]
 
-                # Check date overlap with shift window
+                # Overlap between event and the shift week workdays (Mon-Fri)
+                # Shift runs from shift_start (Mon) to shift_end (next Mon); workdays end on Friday.
                 overlap_start = max(ev_start, shift_start)
-                overlap_end = min(ev_end, shift_end)
-                if overlap_start <= overlap_end:
-                    days = (overlap_end - overlap_start).days + 1
-                    total_overlap_days += days
-                    overlapping_events.append(f"{ev.get('summary', 'Leave')} ({ev_start} to {ev_end})")
+                overlap_end = min(ev_end, shift_end - dt.timedelta(days=1) if shift_end > shift_start else shift_end)
+
+                cur = overlap_start
+                overlap_workdays = 0
+                while cur <= overlap_end:
+                    if cur.weekday() < 5:  # Monday to Friday only (exclude Saturday & Sunday)
+                        overlap_workdays += 1
+                    cur += dt.timedelta(days=1)
+
+                if overlap_workdays > 0:
+                    total_overlap_days += overlap_workdays
+                    overlapping_events.append(
+                        f"{ev.get('summary', 'Urlaub')} ({ev_start} bis {ev_end}, {overlap_workdays} Arbeitstag(e))"
+                    )
 
         is_unavailable = total_overlap_days >= threshold_days
         return is_unavailable, overlapping_events
+
+    def pick_fallback_candidates(
+        self,
+        candidates: List[Dict[str, Any]],
+        reason: str,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], str]:
+        """
+        Fallback mechanism: assigns 2 people at random from the active team list.
+        Triggered when Confluence is unreachable or no available person is found.
+        """
+        self.fallback_triggered = True
+        logger.warning(f"Zufallsauswahl aktiviert! Grund: {reason}")
+        if not candidates:
+            raise ValueError("Kandidatenliste ist leer! Keine Zufallsauswahl möglich.")
+
+        if len(candidates) >= 2:
+            primary, backup = random.sample(candidates, 2)
+        else:
+            primary = candidates[0]
+            backup = candidates[0]
+
+        note = f"⚠️ Zufallsauswahl ({reason})"
+        return primary, backup, note
 
     def pick_fair_candidate(
         self,
@@ -451,39 +491,34 @@ class OpsShiftsManager:
         events: List[Dict[str, Any]],
         shift_start: dt.date,
         shift_end: dt.date,
-    ) -> Tuple[Dict[str, Any], str]:
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
         """
         Picks the primary on-call engineer using Least-Shifts-Completed + Longest-Time-Since-Last-Shift.
-        Filters out members on leave/travel.
+        Returns (candidate, note) or (None, reason) if all are on leave.
         """
         threshold = self.config.get("rotation", {}).get("vacation_overlap_threshold_days", 1)
         member_stats = self.state.setdefault("member_stats", {})
 
-        # Ensure all team members have entries in member_stats
         for m in candidates:
             if m["name"] not in member_stats:
                 member_stats[m["name"]] = {"shifts_completed": 0, "last_shift_end": None}
 
-        # Filter out members on leave/travel
         available = []
         vacation_log = []
         for m in candidates:
             on_vacation, evs = self.is_member_on_vacation(m, events, shift_start, shift_end, threshold)
             if on_vacation:
-                vacation_log.append(f"{m['name']} is on leave/travel: {', '.join(evs)}")
+                vacation_log.append(f"{m['name']}: {', '.join(evs)}")
             else:
                 available.append(m)
 
-        reason = ""
         if vacation_log:
-            logger.info("Leave/travel exclusions: " + "; ".join(vacation_log))
+            logger.info("Abwesenheiten ausgeschlossen: " + "; ".join(vacation_log))
 
         if not available:
-            logger.warning("All active candidates have conflicting leaves! Falling back to full candidate pool.")
-            available = candidates
-            reason = "Warning: Selected despite leave because all team members have overlapping leave."
+            logger.warning("Keine verfügbaren Personen gefunden (alle im Urlaub/abwesend).")
+            return None, "Keine Person verfügbar (alle abwesend)"
 
-        # Sort by: 1) shifts_completed (ascending), 2) last_shift_end (oldest or None first)
         def sort_key(member: Dict[str, Any]):
             stats = member_stats.get(member["name"], {})
             shifts = stats.get("shifts_completed", 0)
@@ -493,11 +528,10 @@ class OpsShiftsManager:
         available.sort(key=sort_key)
         selected = available[0]
         logger.info(
-            f"Selected fair primary candidate: {selected['name']} "
-            f"(shifts={member_stats[selected['name']]['shifts_completed']}, "
-            f"last_end={member_stats[selected['name']]['last_shift_end']})"
+            f"Regulär ausgewählter Primär-Kandidat: {selected['name']} "
+            f"(shifts={member_stats[selected['name']]['shifts_completed']})"
         )
-        return selected, reason
+        return selected, ""
 
     def pick_backup_candidate(
         self,
@@ -507,28 +541,26 @@ class OpsShiftsManager:
         events: List[Dict[str, Any]],
         shift_start: dt.date,
         shift_end: dt.date,
-    ) -> Tuple[Dict[str, Any], str]:
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
         """
-        Selects the backup on-call engineer for the current shift.
-        Best practice: Uses the engineer scheduled to be primary for the FOLLOWING week,
-        provided they are not on leave/travel during the CURRENT shift week.
-        If unavailable, chooses the next eligible candidate from the queue.
+        Selects the backup on-call engineer.
+        Uses next week's primary if available this week; otherwise selects runner-up.
         """
         threshold = self.config.get("rotation", {}).get("vacation_overlap_threshold_days", 1)
         pool = [m for m in candidates if m["name"] != primary_candidate["name"]]
         if not pool:
-            return primary_candidate, "Only one team member available (serves as primary and backup)."
+            return primary_candidate, "Nur eine Person im Team."
 
-        # 1. Preferred choice: Next week's primary engineer (if available this week)
+        # Preferred choice: Next week's primary (if not on vacation this week)
         if next_primary_candidate and next_primary_candidate["name"] != primary_candidate["name"]:
             on_leave, evs = self.is_member_on_vacation(next_primary_candidate, events, shift_start, shift_end, threshold)
             if not on_leave:
-                logger.info(f"Selected backup candidate: {next_primary_candidate['name']} (next week's primary).")
-                return next_primary_candidate, "Next week's primary serves as current backup."
+                logger.info(f"Backup ausgewählt: {next_primary_candidate['name']} (Primär-Kandidat der Folgewoche).")
+                return next_primary_candidate, "Primär-Kandidat der Folgewoche dient als Backup."
             else:
-                logger.info(f"Next week's primary {next_primary_candidate['name']} is on leave this week: {evs}. Picking alternative backup.")
+                logger.info(f"Folgewochen-Primär {next_primary_candidate['name']} ist diese Woche abwesend: {evs}.")
 
-        # 2. Alternative choice: Filter remaining pool for candidates not on leave this week
+        # Runner-up choice: Filter remaining pool for members not on leave this week
         available = []
         for m in pool:
             on_leave, _ = self.is_member_on_vacation(m, events, shift_start, shift_end, threshold)
@@ -536,9 +568,8 @@ class OpsShiftsManager:
                 available.append(m)
 
         if not available:
-            logger.warning("All backup candidates have conflicting leaves this week! Falling back to pool.")
-            available = pool
-            return available[0], "Warning: Backup selected despite leave (all candidates on leave)."
+            logger.warning("Kein reguläres Backup gefunden (alle restlichen Kandidaten abwesend).")
+            return None, "Kein Backup verfügbar (alle restlichen Kandidaten abwesend)"
 
         member_stats = self.state.setdefault("member_stats", {})
         def sort_key(member: Dict[str, Any]):
@@ -549,8 +580,8 @@ class OpsShiftsManager:
 
         available.sort(key=sort_key)
         selected = available[0]
-        logger.info(f"Selected backup candidate: {selected['name']} (runner-up queue).")
-        return selected, "Runner-up selected as backup."
+        logger.info(f"Backup ausgewählt: {selected['name']} (Runner-Up).")
+        return selected, "Runner-Up als Backup ausgewählt."
 
     def resolve_shifts(self) -> Tuple[Dict[str, Any], Dict[str, Any], bool, List[Dict[str, Any]]]:
         """
@@ -559,19 +590,17 @@ class OpsShiftsManager:
         """
         team = [m for m in self.config.get("team", []) if m.get("active", True)]
         if not team:
-            raise ValueError("No active team members configured in 'team' list!")
+            raise ValueError("Keine aktiven Teammitglieder in 'team' konfiguriert!")
 
         shift_start, shift_end = self._calculate_shift_window(self.now)
         next_shift_start = shift_end
         next_shift_end = next_shift_start + dt.timedelta(days=self.config.get("rotation", {}).get("shift_duration_days", 7))
 
-        # Fetch events for the 2-week observation window
         calendar_events = self.fetch_calendar_events(shift_start, next_shift_end)
 
         current_shift = self.state.get("current_shift")
         is_handoff_day = False
 
-        # Determine if shift rotation is required
         needs_rotation = False
         if not current_shift:
             needs_rotation = True
@@ -582,7 +611,7 @@ class OpsShiftsManager:
             is_handoff_day = True
         else:
             curr_end_date = dt.date.fromisoformat(current_shift["end_date"])
-            shift_start_hour = self.config.get("rotation", {}).get("shift_start_hour", 9)
+            shift_start_hour = self.config.get("rotation", {}).get("shift_start_hour", 6)
             if self.now.date() >= curr_end_date:
                 needs_rotation = True
                 is_handoff_day = True
@@ -592,20 +621,39 @@ class OpsShiftsManager:
                     is_handoff_day = True
 
         if needs_rotation:
-            logger.info(f"Assigning new shift for window {shift_start} to {shift_end}...")
-            primary_candidate, primary_note = self.pick_fair_candidate(team, calendar_events, shift_start, shift_end)
+            logger.info(f"Neuer Schichtwechsel für Fenster {shift_start} bis {shift_end}...")
+            if self.calendar_unreachable:
+                # Fallback: Confluence unreachable
+                primary_candidate, backup_candidate, note = self.pick_fallback_candidates(
+                    team, "Confluence-Kalender war nicht erreichbar"
+                )
+                backup_note = note
+            else:
+                primary_candidate, primary_note = self.pick_fair_candidate(team, calendar_events, shift_start, shift_end)
+                if not primary_candidate:
+                    # Fallback: No candidate available (all on leave)
+                    primary_candidate, backup_candidate, note = self.pick_fallback_candidates(
+                        team, "Alle Teammitglieder abwesend"
+                    )
+                    backup_note = note
+                else:
+                    note = primary_note
+                    next_primary, _ = self.pick_fair_candidate(team, calendar_events, next_shift_start, next_shift_end)
+                    backup_candidate, backup_note = self.pick_backup_candidate(
+                        team, primary_candidate, next_primary, calendar_events, shift_start, shift_end
+                    )
+                    if not backup_candidate:
+                        # Fallback: Pick random backup from remaining pool
+                        pool = [m for m in team if m["name"] != primary_candidate["name"]]
+                        backup_candidate = random.choice(pool) if pool else primary_candidate
+                        backup_note = "⚠️ Zufallsauswahl (Kein reguläres Backup verfügbar)"
+                        self.fallback_triggered = True
 
             # Update member stats for primary
             name = primary_candidate["name"]
             stats = self.state["member_stats"].setdefault(name, {"shifts_completed": 0, "last_shift_end": None})
             stats["shifts_completed"] += 1
             stats["last_shift_end"] = shift_end.isoformat()
-
-            # Pre-calculate next week's primary to pick the backup
-            next_primary, _ = self.pick_fair_candidate(team, calendar_events, next_shift_start, next_shift_end)
-            backup_candidate, backup_note = self.pick_backup_candidate(
-                team, primary_candidate, next_primary, calendar_events, shift_start, shift_end
-            )
 
             current_shift = {
                 "engineer": name,
@@ -615,43 +663,61 @@ class OpsShiftsManager:
                 "start_date": shift_start.isoformat(),
                 "end_date": shift_end.isoformat(),
                 "assigned_at": self.now.isoformat(),
-                "note": primary_note,
+                "note": note,
                 "backup_note": backup_note,
             }
             self.state["current_shift"] = current_shift
             self.state.setdefault("history", []).append(current_shift)
             self._save_state()
         else:
-            # Shift is already active: verify backup is present in state
             if "backup" not in current_shift or not current_shift["backup"]:
-                logger.info("Current shift is missing backup engineer. Resolving backup now...")
+                logger.info("Schicht hat noch kein Backup. Ergänze Backup...")
                 primary_name = current_shift["engineer"]
                 primary_cand = next((m for m in team if m["name"] == primary_name), {"name": primary_name})
                 next_primary, _ = self.pick_fair_candidate(team, calendar_events, next_shift_start, next_shift_end)
-                backup_candidate, backup_note = self.pick_backup_candidate(
+                backup_cand, b_note = self.pick_backup_candidate(
                     team, primary_cand, next_primary, calendar_events, shift_start, shift_end
                 )
-                current_shift["backup"] = backup_candidate["name"]
-                current_shift["backup_email"] = backup_candidate.get("teams_email", "")
-                current_shift["backup_note"] = backup_note
+                if not backup_cand:
+                    pool = [m for m in team if m["name"] != primary_name]
+                    backup_cand = random.choice(pool) if pool else primary_cand
+                    b_note = "⚠️ Zufallsauswahl"
+                    self.fallback_triggered = True
+                current_shift["backup"] = backup_cand["name"]
+                current_shift["backup_email"] = backup_cand.get("teams_email", "")
+                current_shift["backup_note"] = b_note
                 self.state["current_shift"] = current_shift
                 self._save_state()
 
             logger.info(
-                f"Current shift active: Primary={current_shift['engineer']}, "
-                f"Backup={current_shift['backup']} (ends {current_shift['end_date']})"
+                f"Aktive Schicht: Primär={current_shift['engineer']}, "
+                f"Backup={current_shift['backup']} (bis {current_shift['end_date']})"
             )
 
-        # Pre-calculate preview for next week (Primary + Backup)
-        next_primary, next_primary_note = self.pick_fair_candidate(
-            team, calendar_events, next_shift_start, next_shift_end
-        )
-        week_after_start = next_shift_end
-        week_after_end = week_after_start + dt.timedelta(days=self.config.get("rotation", {}).get("shift_duration_days", 7))
-        week_after_primary, _ = self.pick_fair_candidate(team, calendar_events, week_after_start, week_after_end)
-        next_backup, next_backup_note = self.pick_backup_candidate(
-            team, next_primary, week_after_primary, calendar_events, next_shift_start, next_shift_end
-        )
+        # Pre-calculate preview for next week
+        if self.calendar_unreachable:
+            next_primary, next_backup, prev_note = self.pick_fallback_candidates(
+                team, "Confluence-Kalender war nicht erreichbar"
+            )
+        else:
+            next_primary, next_primary_note = self.pick_fair_candidate(
+                team, calendar_events, next_shift_start, next_shift_end
+            )
+            if not next_primary:
+                next_primary, next_backup, prev_note = self.pick_fallback_candidates(
+                    team, "Alle Mitglieder in Folgewoche abwesend"
+                )
+            else:
+                prev_note = next_primary_note
+                week_after_start = next_shift_end
+                week_after_end = week_after_start + dt.timedelta(days=self.config.get("rotation", {}).get("shift_duration_days", 7))
+                week_after_primary, _ = self.pick_fair_candidate(team, calendar_events, week_after_start, week_after_end)
+                next_backup, _ = self.pick_backup_candidate(
+                    team, next_primary, week_after_primary, calendar_events, next_shift_start, next_shift_end
+                )
+                if not next_backup:
+                    pool = [m for m in team if m["name"] != next_primary["name"]]
+                    next_backup = random.choice(pool) if pool else next_primary
 
         next_preview = {
             "engineer": next_primary["name"],
@@ -660,13 +726,13 @@ class OpsShiftsManager:
             "backup_email": next_backup.get("teams_email", ""),
             "start_date": next_shift_start.isoformat(),
             "end_date": next_shift_end.isoformat(),
-            "note": next_primary_note,
+            "note": prev_note,
         }
 
         return current_shift, next_preview, is_handoff_day, calendar_events
 
     # =========================================================================
-    # Microsoft Teams Notification (Adaptive Card)
+    # Microsoft Teams Notification (Mondays & Fridays)
     # =========================================================================
 
     def build_teams_adaptive_card(
@@ -677,58 +743,84 @@ class OpsShiftsManager:
         events: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Builds a rich Adaptive Card JSON payload in German displaying both Primary and Backup.
+        Builds a rich Adaptive Card JSON payload in German.
+        Formatted specifically for:
+        - Mondays: Schichtwechsel
+        - Fridays: Forecast (Weekend & upcoming week preview)
         """
         teams_conf = self.config.get("teams", {})
         confluence_conf = self.config.get("confluence", {})
         cal_url = confluence_conf.get("calendar_page_url", "")
-        betriebsaufgaben_url = teams_conf.get("betriebsaufgaben_url")
+        betriebsaufgaben_url = teams_conf.get("betriebsaufgaben_url") or teams_conf.get("runbook_url", "")
 
         GERMAN_WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
         GERMAN_MONTHS = ["", "Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
         GERMAN_MONTHS_SHORT = ["", "Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."]
 
-        weekday_name = GERMAN_WEEKDAYS[self.now.weekday()]
+        weekday = self.now.weekday()  # 0 = Monday, 4 = Friday
+        is_monday = (weekday == 0)
+        is_friday = (weekday == 4)
+
+        weekday_name = GERMAN_WEEKDAYS[weekday]
         month_name = GERMAN_MONTHS[self.now.month]
         today_str = f"{weekday_name}, {self.now.day:02d}. {month_name} {self.now.year}"
 
-        title = "🔄 OPS-Tätigkeiten Schichtwechsel" if is_handoff_day else "☀️ OPS-Tätigkeiten Tagesübersicht"
-        subtitle = "Täglicher Statusbericht und wöchentliche Bereitschaftsübersicht für das SRE-Team."
-        accent_color = "warning" if is_handoff_day else "default"
-
         curr_start_dt = dt.date.fromisoformat(current_shift["start_date"])
         curr_end_dt = dt.date.fromisoformat(current_shift["end_date"])
+        next_start_dt = dt.date.fromisoformat(next_preview["start_date"])
+
         curr_start = f"{curr_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_start_dt.month]}"
         curr_end = f"{curr_end_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_end_dt.month]} {curr_end_dt.year}"
+        next_start_str = f"{next_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[next_start_dt.month]} {next_start_dt.year}"
 
         primary_str = f"**{current_shift['engineer']}** ({current_shift.get('email', '')})"
         backup_str = f"**{current_shift.get('backup', 'Keiner')}** ({current_shift.get('backup_email', '')})"
-        next_str = (
-            f"**{next_preview['engineer']}** (Primär) | "
-            f"**{next_preview.get('backup', 'Keiner')}** (Backup)"
-        )
+        next_primary_str = f"**{next_preview['engineer']}** ({next_preview.get('email', '')})"
+        next_backup_str = f"**{next_preview.get('backup', 'Keiner')}** ({next_preview.get('backup_email', '')})"
 
-        facts = [
-            {"title": "Datum:", "value": today_str},
-            {"title": "Bereitschaft (Primär):", "value": primary_str},
-            {"title": "Bereitschaft (Backup):", "value": backup_str},
-            {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_end}"},
-            {"title": "Nächste Woche (Vorschau):", "value": next_str},
-        ]
+        if is_friday:
+            title = "🔮 SRE Betriebsaufgaben: Wochenausklang & Vorschau"
+            subtitle = "Wochenausklang und Vorschau auf die Betriebsaufgaben der kommenden Arbeitswoche (Montag–Freitag)."
+            accent_color = "accent"
+            facts = [
+                {"title": "Datum:", "value": today_str},
+                {"title": "Aktuell zuständig (Primär):", "value": primary_str},
+                {"title": "Aktuell zuständig (Backup):", "value": backup_str},
+                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_end} (Arbeitszeitende)"},
+                {"title": "Nächste Woche ab Montag (Primär):", "value": next_primary_str},
+                {"title": "Nächste Woche ab Montag (Backup):", "value": next_backup_str},
+                {"title": "Schichtstart Folgewoche:", "value": f"Montag, {next_start_str} (06:00 Uhr)"},
+            ]
+            vac_header = "**🌴 Geplante Abwesenheiten für die Folgewoche (Confluence)**"
+            # In Friday forecast, show vacations for the upcoming week
+            shift_start_filter = next_start_dt
+            shift_end_filter = dt.date.fromisoformat(next_preview["end_date"])
+        else:
+            title = "🔄 SRE Betriebsaufgaben: Schichtwechsel" if is_monday or is_handoff_day else "☀️ SRE Betriebsaufgaben: Übersicht"
+            subtitle = "Wöchentlicher Schichtwechsel für die SRE-Betriebsaufgaben (Mo–Fr, 06:00 CET)."
+            accent_color = "warning" if is_monday or is_handoff_day else "default"
+            facts = [
+                {"title": "Datum:", "value": today_str},
+                {"title": "Betriebsaufgaben (Primär):", "value": primary_str},
+                {"title": "Betriebsaufgaben (Backup):", "value": backup_str},
+                {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_end}"},
+                {"title": "Folgewoche (Vorschau):", "value": f"{next_primary_str} | {next_backup_str}"},
+            ]
+            vac_header = "**🌴 Abwesenheiten & Urlaub im Team (Confluence)**"
+            shift_start_filter = curr_start_dt
+            shift_end_filter = curr_end_dt
 
-        # Summarize team members on leave/travel during this week
-        shift_start = dt.date.fromisoformat(current_shift["start_date"])
-        shift_end = dt.date.fromisoformat(current_shift["end_date"])
+        # Filter leave events for the relevant window
         vacations_now = []
         for ev in events:
-            if max(ev["start"], shift_start) <= min(ev["end"], shift_end):
+            if max(ev["start"], shift_start_filter) <= min(ev["end"], shift_end_filter):
                 ev_s = ev["start"]
                 ev_e = ev["end"]
                 ev_s_str = f"{ev_s.day:02d}.{ev_s.month:02d}."
                 ev_e_str = f"{ev_e.day:02d}.{ev_e.month:02d}.{ev_e.year}"
                 vacations_now.append(f"• {ev.get('summary', 'Urlaub')} ({ev_s_str} bis {ev_e_str})")
 
-        vacation_text = "\n".join(vacations_now) if vacations_now else "Keine eingetragenen Abwesenheiten oder Urlaube für diese Woche."
+        vacation_text = "\n".join(vacations_now) if vacations_now else "Keine eingetragenen Abwesenheiten für diesen Zeitraum."
 
         body: List[Dict[str, Any]] = [
             {
@@ -750,6 +842,35 @@ class OpsShiftsManager:
                     },
                 ],
             },
+        ]
+
+        # Warning container if random fallback was triggered
+        is_fallback = (
+            self.calendar_unreachable
+            or self.fallback_triggered
+            or "Zufallsauswahl" in str(current_shift.get("note", ""))
+            or "Zufallsauswahl" in str(current_shift.get("backup_note", ""))
+        )
+        if is_fallback:
+            body.append({
+                "type": "Container",
+                "style": "attention",
+                "items": [
+                    {
+                        "type": "TextBlock",
+                        "text": "⚠️ **Achtung: Zufallsauswahl aktiv!**",
+                        "color": "Attention",
+                        "weight": "Bolder",
+                    },
+                    {
+                        "type": "TextBlock",
+                        "text": "Der Confluence-Kalender war nicht erreichbar oder es konnte keine reguläre Person ermittelt werden. Die Zuweisung erfolgte per Zufallsauswahl aus dem Team. Bitte prüft die Einteilung!",
+                        "wrap": True,
+                    },
+                ],
+            })
+
+        body.extend([
             {
                 "type": "FactSet",
                 "facts": facts,
@@ -757,7 +878,7 @@ class OpsShiftsManager:
             },
             {
                 "type": "TextBlock",
-                "text": "**🌴 Abwesenheiten & Urlaub im Team (Confluence)**",
+                "text": vac_header,
                 "weight": "Bolder",
                 "spacing": "Medium",
             },
@@ -767,20 +888,14 @@ class OpsShiftsManager:
                 "wrap": True,
                 "isSubtle": True,
             },
-        ]
+        ])
 
-        notes = []
-        if current_shift.get("note"):
-            notes.append(f"Primär: {current_shift['note']}")
-        if current_shift.get("backup_note") and "Warning" in current_shift["backup_note"]:
-            notes.append(f"Backup: {current_shift['backup_note']}")
-
-        if notes:
+        if is_friday:
             body.append({
                 "type": "TextBlock",
-                "text": "⚠️ *" + " | ".join(notes) + "*",
-                "color": "Attention",
+                "text": "💡 *Hinweis zur Folgewoche: Bitte prüft eure Verfügbarkeit für nächste Woche. Falls ein Schichttausch nötig ist, sprecht euch bitte rechtzeitig ab.*",
                 "wrap": True,
+                "isSubtle": True,
             })
 
         actions = []
@@ -815,11 +930,16 @@ class OpsShiftsManager:
         return card_payload
 
     def notify_teams(self, card_payload: Dict[str, Any]) -> bool:
-        webhook_url = os.environ.get("TEAMS_WEBHOOK_URL")
+        webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "").strip().strip("'\"")
         if self.dry_run or not webhook_url:
             logger.info("[Dry Run or Missing TEAMS_WEBHOOK_URL] Teams card payload preview:")
             print(json.dumps(card_payload, indent=2))
             return True
+
+        if ("powerplatform.com" in webhook_url or "logic.azure.com" in webhook_url) and "api-version=" not in webhook_url:
+            sep = "&" if "?" in webhook_url else "?"
+            logger.warning("TEAMS_WEBHOOK_URL is missing 'api-version'. Auto-appending 'api-version=2024-10-01'.")
+            webhook_url = f"{webhook_url}{sep}api-version=2024-10-01"
 
         try:
             logger.info("Posting Adaptive Card to Microsoft Teams...")
@@ -828,9 +948,18 @@ class OpsShiftsManager:
                 if resp.status_code in (200, 202):
                     logger.info("Successfully posted on-call notification to Microsoft Teams.")
                     return True
-                else:
-                    logger.error(f"Failed to post to Teams. Status {resp.status_code}: {resp.text}")
-                    return False
+
+                if resp.status_code == 400 and "attachments" in card_payload:
+                    logger.info("Retrying with unwrapped raw AdaptiveCard schema...")
+                    raw_card = card_payload["attachments"][0]["content"]
+                    retry_resp = requests.post(webhook_url, json=raw_card, timeout=10)
+                    if retry_resp.status_code in (200, 202):
+                        logger.info("Successfully posted on-call notification to Microsoft Teams (unwrapped).")
+                        return True
+                    logger.error(f"Failed retry. Status {retry_resp.status_code}: {retry_resp.text}")
+
+                logger.error(f"Failed to post to Teams. Status {resp.status_code}: {resp.text}")
+                return False
             else:
                 data = json.dumps(card_payload).encode("utf-8")
                 req = urllib.request.Request(
@@ -888,7 +1017,7 @@ def main():
         "--current-time",
         type=str,
         default=None,
-        help="Simulate running at a specific ISO datetime (e.g. 2026-11-09T09:15:00).",
+        help="Simulate running at a specific ISO datetime (e.g. 2026-11-09T06:05:00).",
     )
 
     args = parser.parse_args()

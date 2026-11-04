@@ -16,9 +16,12 @@ rotation:
   shift_duration_days: 7
   # Shift change day: 0 = Monday, 6 = Sunday
   shift_start_weekday: 0
-  # Shift change hour in local time (e.g. 9 for 09:00 Europe/Berlin)
-  shift_start_hour: 9
-  # Minimum days of overlapping vacation during a shift to mark someone unavailable
+  # Shift change hour in local time (6 for 06:00 CET/CEST Europe/Berlin)
+  shift_start_hour: 6
+  # Mindestanzahl an abwesenden Arbeitstagen (Mo–Fr), ab der jemand für die Woche ausgeschlossen wird.
+  # HINWEIS: Samstage und Sonntage sind automatisch von der Berechnung ausgeschlossen!
+  # 1 = Bereits 1 abwesender Arbeitstag (z.B. Freitag) schließt die Person für die Woche aus
+  # 2 = 1 Fehltag (z.B. einzelner Freitag) ist erlaubt; Ausschluss erst ab >= 2 Fehltagen
   vacation_overlap_threshold_days: 1
 
 vacation:
