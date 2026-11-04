@@ -931,6 +931,9 @@ class OpsShiftsManager:
 
     def notify_teams(self, card_payload: Dict[str, Any]) -> bool:
         webhook_url = os.environ.get("TEAMS_WEBHOOK_URL", "").strip().strip("'\"")
+        # Automatically clean shell escape backslashes (e.g. from zsh bracketed paste: \?, \&, \=)
+        webhook_url = webhook_url.replace(r"\?", "?").replace(r"\&", "&").replace(r"\=", "=")
+
         if self.dry_run or not webhook_url:
             logger.info("[Dry Run or Missing TEAMS_WEBHOOK_URL] Teams card payload preview:")
             print(json.dumps(card_payload, indent=2))
