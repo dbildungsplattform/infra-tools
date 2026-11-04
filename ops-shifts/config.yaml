@@ -51,15 +51,35 @@ vacation:
 # Team members participating in the on-call rotation.
 # 'aliases' are matched against Confluence calendar event summaries/attendees (case-insensitive).
 team:
-  - name: "Alex Example"
-    aliases: ["Alex", "Example", "aexample"]
-    teams_email: "alex.example@dbildungscloud.de"
+  - name: "Anastasiia Korzhylova"
+    aliases: ["Anastasiia", "Korzhylova"]
+    teams_email: "anastasiia.korzhylova@capgemini.com"
     active: true
-  - name: "Jordan Sample"
-    aliases: ["Jordan", "Sample", "jsample"]
-    teams_email: "jordan.sample@dbildungscloud.de"
+  - name: "Alicja Konior"
+    aliases: ["Alicja", "Konior", "Alicja Aleksandra Konior"]
+    teams_email: "alicja.konior@capgemini.com"
     active: true
-  - name: "Morgan Test"
-    aliases: ["Morgan", "Test", "mtest"]
-    teams_email: "morgan.test@dbildungscloud.de"
+  - name: "Ralf Nelles"
+    aliases: ["Ralf", "Nelles"]
+    teams_email: "ralf.nelles@capgemini.com"
+    active: true
+  - name: "Michael Povel"
+    aliases: ["Michael", "Povel"]
+    teams_email: "michael.povel@capgemini.com"
+    active: true
+  - name: "Nils Brähmer"
+    aliases: ["Nils", "Brähmer", "Braehmer"]
+    teams_email: "nils.braehmer@capgemini.com"
+    active: true
+  - name: "Simon Colin"
+    aliases: ["Simon", "Colin"]
+    teams_email: "simon.colin@capgemini.com"
+    active: true
+  - name: "Laura Gehring-Muyshondt"
+    aliases: ["Laura", "Gehring", "Muyshondt", "Gehring-Muyshondt"]
+    teams_email: "laura.gehring-muyshondt@capgemini.com"
+    active: true
+  - name: "Martin Jürgens"
+    aliases: ["Martin", "Jürgens", "Juergens"]
+    teams_email: "martin.juergens@capgemini.com"
     active: true
