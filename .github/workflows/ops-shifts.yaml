@@ -1,14 +1,14 @@
-name: SRE On-Call Shift Rotation & Teams Daily Notifier
+name: SRE On-Call Shift Rotation & Teams Notifier
 
 on:
   schedule:
-    # Runs Monday to Friday at 07:30 UTC.
-    # In Europe/Berlin, this corresponds to 08:30 CET (standard time) or 09:30 CEST (summer time).
-    - cron: "30 7 * * 1-5"
+    # Runs Monday and Friday at 05:00 UTC.
+    # In Europe/Berlin, this corresponds to 06:00 CET (standard time) or 07:00 CEST (summer time).
+    - cron: "0 5 * * 1,5"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (do not post to Teams or commit state to git)"
+        description: "Dry run (do not post to Teams or update state)"
         type: boolean
         default: false
       force_rotation:
@@ -28,14 +28,12 @@ jobs:
   run-ops-shifts:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      variables: write  # Enables updating the ONCALL_STATE repository variable (zero git commits)
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,6 +51,18 @@ jobs:
         run: |
           python -m unittest ops-shifts/test_ops_shifts.py
 
+      - name: Retrieve state from GitHub Variable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ops-shifts
+          if gh variable get ONCALL_STATE > ops-shifts/state.json 2>/dev/null; then
+            echo "Successfully loaded ONCALL_STATE from repository variables."
+          else
+            echo "Variable ONCALL_STATE not found or empty. Initializing with default state."
+            echo "{}" > ops-shifts/state.json
+          fi
+
       - name: Execute Ops Shifts Manager
         env:
           CONFLUENCE_PAT: ${{ secrets.CONFLUENCE_PAT }}
@@ -69,18 +79,14 @@ jobs:
             EXTRA_ARGS="$EXTRA_ARGS --mock-calendar"
           fi
 
-          python ops-shifts/ops_shifts.py $EXTRA_ARGS
+          python ops-shifts/ops_shifts.py --config ops-shifts/config.yaml --state ops-shifts/state.json $EXTRA_ARGS
 
-      - name: Commit updated rotation state
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+      - name: Persist updated state to GitHub Variable
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet ops-shifts/state.json; then
-            echo "State file changed. Committing and pushing..."
-            git add ops-shifts/state.json
-            git commit -m "chore(ops-shifts): update on-call rotation state [skip ci]"
-            git push
-          else
-            echo "No changes in ops-shifts/state.json to commit."
+          if [ -s ops-shifts/state.json ]; then
+            gh variable set ONCALL_STATE < ops-shifts/state.json
+            echo "Successfully updated GitHub Variable ONCALL_STATE."
           fi
