@@ -254,8 +254,20 @@ class OpsShiftsManager:
                 start_raw = ev.get("dtstart").dt
                 end_raw = ev.get("dtend").dt if ev.get("dtend") else start_raw
 
-                start_date = start_raw if isinstance(start_raw, dt.date) and not isinstance(start_raw, dt.datetime) else start_raw.date()
-                end_date = end_raw if isinstance(end_raw, dt.date) and not isinstance(end_raw, dt.datetime) else end_raw.date()
+                start_date = start_raw.date() if isinstance(start_raw, dt.datetime) else start_raw
+
+                # RFC 5545: All-day / midnight DTEND is non-inclusive (the day/second after).
+                # E.g. DTSTART:20261113 DTEND:20261114 is an all-day event for Nov 13 only.
+                if isinstance(end_raw, dt.datetime):
+                    if end_raw.time() == dt.time(0, 0) and end_raw.date() > start_date:
+                        end_date = end_raw.date() - dt.timedelta(days=1)
+                    else:
+                        end_date = end_raw.date()
+                else:
+                    if end_raw > start_date:
+                        end_date = end_raw - dt.timedelta(days=1)
+                    else:
+                        end_date = end_raw
 
                 parsed.append({
                     "summary": summary,
@@ -283,6 +295,9 @@ class OpsShiftsManager:
                 if "start" in current:
                     if "end" not in current:
                         current["end"] = current["start"]
+                    elif current["end"] > current["start"]:
+                        # Non-inclusive end date for all-day events
+                        current["end"] = current["end"] - dt.timedelta(days=1)
                     if current["start"] <= window_end and current["end"] >= window_start:
                         events.append(current)
                 current = None
@@ -329,8 +344,13 @@ class OpsShiftsManager:
             if not start_str:
                 continue
             try:
-                start_date = dt.datetime.fromisoformat(start_str.replace("Z", "+00:00")).date()
-                end_date = dt.datetime.fromisoformat(end_str.replace("Z", "+00:00")).date()
+                start_dt = dt.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                end_dt = dt.datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                start_date = start_dt.date()
+                if end_dt.time() == dt.time(0, 0) and end_dt.date() > start_date:
+                    end_date = end_dt.date() - dt.timedelta(days=1)
+                else:
+                    end_date = end_dt.date()
                 parsed.append({
                     "summary": summary,
                     "description": description,
@@ -789,7 +809,6 @@ class OpsShiftsManager:
                 {"title": "Datum:", "value": today_str},
                 {"title": "Aktuell zuständig:", "value": primary_str},
                 {"title": "Aktuell im Backup:", "value": backup_str},
-                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_work_end} (Dienstschluss)"},
                 {"title": "Nächste Woche zuständig:", "value": next_primary_str},
                 {"title": "Nächste Woche im Backup:", "value": next_backup_str},
                 {"title": "Nächste Schicht:", "value": f"{next_start} – {next_work_end}"},
@@ -851,9 +870,43 @@ class OpsShiftsManager:
             if max(ev["start"], shift_start_filter) <= min(ev["end"], shift_end_filter):
                 ev_s = ev["start"]
                 ev_e = ev["end"]
-                ev_s_str = f"{ev_s.day:02d}.{ev_s.month:02d}."
-                ev_e_str = f"{ev_e.day:02d}.{ev_e.month:02d}.{ev_e.year}"
-                vacations_now.append(f"• {ev.get('summary', 'Urlaub')} ({ev_s_str} bis {ev_e_str})")
+
+                raw_summary = ev.get("summary", "Urlaub").strip()
+                # Find matching team member from config or attendees
+                matched_member = None
+                for m in self.config.get("team", []):
+                    patterns = [m["name"].lower()] + [str(a).lower() for a in m.get("aliases", [])]
+                    event_ident_text = f"{raw_summary} {ev.get('description', '')} {' '.join(categories)} {' '.join(ev.get('attendees', []))}".lower()
+                    if any(p in event_ident_text for p in patterns):
+                        matched_member = m
+                        break
+
+                if matched_member:
+                    member_name = matched_member["name"]
+                    # If member name or aliases are not in the summary, prepend the person's name
+                    already_has_name = any(
+                        p in raw_summary.lower()
+                        for p in [member_name.lower()] + [str(a).lower() for a in matched_member.get("aliases", [])]
+                    )
+                    if not already_has_name:
+                        display_text = f"{member_name}: {raw_summary}"
+                    else:
+                        display_text = raw_summary
+                elif ev.get("attendees"):
+                    att = ev["attendees"][0]
+                    display_text = f"{att}: {raw_summary}"
+                else:
+                    display_text = raw_summary
+
+                # Format single-day vs multi-day nicely
+                if ev_s == ev_e:
+                    date_str = f"{ev_s.day:02d}.{ev_s.month:02d}.{ev_s.year}"
+                elif ev_s.year == ev_e.year:
+                    date_str = f"{ev_s.day:02d}.{ev_s.month:02d}. bis {ev_e.day:02d}.{ev_e.month:02d}.{ev_e.year}"
+                else:
+                    date_str = f"{ev_s.day:02d}.{ev_s.month:02d}.{ev_s.year} bis {ev_e.day:02d}.{ev_e.month:02d}.{ev_e.year}"
+
+                vacations_now.append(f"• {display_text} ({date_str})")
 
         vacation_text = "\n".join(vacations_now) if vacations_now else "Keine eingetragenen Abwesenheiten für diesen Zeitraum."
 
@@ -929,7 +982,7 @@ class OpsShiftsManager:
         if is_friday:
             body.append({
                 "type": "TextBlock",
-                "text": "💡 *Hinweis zur Folgewoche: Bitte prüft eure Verfügbarkeit für nächste Woche. Falls ein Schichttausch nötig ist, sprecht euch bitte rechtzeitig ab.*",
+                "text": "💡 *Bitte prüft eure Verfügbarkeit für nächste Woche. Falls ein Schichttausch nötig ist, sprecht euch bitte rechtzeitig ab.*",
                 "wrap": True,
                 "isSubtle": True,
             })

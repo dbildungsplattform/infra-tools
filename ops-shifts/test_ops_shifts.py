@@ -242,7 +242,6 @@ team:
         self.assertIn("Vorschau", json_fri)
         self.assertIn("Aktuell zuständig:", json_fri)
         self.assertIn("Nächste Woche zuständig:", json_fri)
-        self.assertIn("Hinweis zur Folgewoche:", json_fri)
 
         # 2. Monday test (Schichtwechsel)
         manager_mon = OpsShiftsManager(
@@ -300,6 +299,42 @@ team:
             member, friday_weekend_event, dt.date(2026, 11, 2), dt.date(2026, 11, 9), threshold_days=2
         )
         self.assertFalse(on_leave_t2, "With threshold=2, missing only 1 workday (Friday) should remain eligible!")
+
+    def test_all_day_non_inclusive_and_name_enrichment(self):
+        """Verify RFC 5545 non-inclusive DTEND and member name enrichment on cards."""
+        manager = OpsShiftsManager(
+            config_path=self.config_path,
+            state_path=self.state_path,
+            dry_run=True,
+            simulated_now=dt.datetime(2026, 11, 9, 6, 0),
+        )
+        # Event where summary is just "Urlaub" and member name is in attendees
+        events = [{
+            "summary": "Urlaub",
+            "categories": ["Leave"],
+            "attendees": ["Alice Developer"],
+            "start": dt.date(2026, 11, 13),
+            "end": dt.date(2026, 11, 13),  # 1 day
+        }]
+        current_shift = {
+            "engineer": "Bob Sysadmin",
+            "email": "bob@dbildungscloud.de",
+            "backup": "Charlie SRE",
+            "backup_email": "charlie@dbildungscloud.de",
+            "start_date": "2026-11-09",
+            "end_date": "2026-11-16",
+        }
+        next_preview = {
+            "engineer": "Charlie SRE",
+            "email": "charlie@dbildungscloud.de",
+            "backup": "Bob Sysadmin",
+            "backup_email": "bob@dbildungscloud.de",
+            "start_date": "2026-11-16",
+            "end_date": "2026-11-23",
+        }
+        card = manager.build_teams_adaptive_card(current_shift, next_preview, True, events)
+        card_str = json.dumps(card, ensure_ascii=False)
+        self.assertIn("Alice Developer: Urlaub (13.11.2026)", card_str)
 
 
 if __name__ == "__main__":
