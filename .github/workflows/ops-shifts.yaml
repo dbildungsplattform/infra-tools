@@ -54,6 +54,7 @@ jobs:
       - name: Retrieve state from GitHub Variable
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           mkdir -p ops-shifts
           if gh variable get ONCALL_STATE > ops-shifts/state.json 2>/dev/null; then
@@ -85,6 +86,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ -s ops-shifts/state.json ]; then
             gh variable set ONCALL_STATE < ops-shifts/state.json

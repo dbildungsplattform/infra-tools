@@ -13,6 +13,8 @@ prod-container-list/*.log
 
 onepwd/credentials.json
 
+ops-shifts/state.json
+
 awx-ee/context/
 awx-ee/Dockerfile
 awx-ee/_build/scripts
