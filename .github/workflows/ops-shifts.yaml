@@ -1,9 +1,6 @@
 name: OPS Shift Rotation & Teams Notifier
 
 on:
-  push:
-    branches:
-      - feat/OPS-12388-ops-shifts
   schedule:
     # Runs Monday and Friday at 05:00 UTC.
     # In Europe/Berlin, this corresponds to 06:00 CET (standard time) or 07:00 CEST (summer time).
@@ -11,14 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       card_type:
-        description: "Kartentyp / Vorlage (auto, uebersicht, schichtwechsel, vorschau)"
+        description: "Vorlage für die Teams-Nachricht"
         type: choice
         options:
-          - "auto"
           - "uebersicht"
           - "schichtwechsel"
           - "vorschau"
-        default: "auto"
+        default: "uebersicht"
       force_rotation:
         description: "Schichtwechsel erzwingen (auch wenn aktuelle Schicht noch aktiv ist)"
         type: boolean
@@ -87,8 +83,10 @@ jobs:
           if [ "${{ inputs.force_rotation }}" = "true" ]; then
             EXTRA_ARGS="$EXTRA_ARGS --force-rotation"
           fi
-          if [ -n "${{ inputs.card_type }}" ] && [ "${{ inputs.card_type }}" != "auto" ]; then
-            EXTRA_ARGS="$EXTRA_ARGS --card-type ${{ inputs.card_type }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ inputs.card_type }}" ]; then
+              EXTRA_ARGS="$EXTRA_ARGS --card-type ${{ inputs.card_type }}"
+            fi
           fi
 
           python ops-shifts/ops_shifts.py --config ops-shifts/config.yaml --state ops-shifts/state.json $EXTRA_ARGS
