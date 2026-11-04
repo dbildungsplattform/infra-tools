@@ -1,30 +1,30 @@
 # SRE Ops Shifts & Teams Notifier
 
-Automated on-call shift rotation and daily Microsoft Teams notification bot for the SRE team.
+Automated on-call shift rotation, vacation conflict avoidance via Confluence, and Microsoft Teams notifications for the SRE team.
 
 ## Overview
 
-- **Weekly Rotation**: Rotates on-call shifts every Monday morning at 09:00 (Europe/Berlin).
+- **Weekly Rotation & Betriebsaufgaben (Mo–Fr)**:
+  - Shifts rotate every **Monday at 06:00 CET/CEST** (Europe/Berlin) and cover SRE operational duties (Betriebsaufgaben: Alerting-Channels, technische Boardings, etc.) during regular working hours (Monday–Friday).
+  - Teams notifications are posted twice weekly at **06:00 CET/CEST**:
+    - **Mondays (Schichtwechsel)**: Introduces the new Primary and Backup engineers for the work week.
+    - **Fridays (Wochenausklang & Vorschau)**: Summarizes the week's end and gives an early preview of the upcoming Monday shift assignments and leaves.
 - **Two Roles Per Shift (Primary + Backup)**:
-  - **Primary On-Call**: Handled by the fair *least-shifts-completed* algorithm.
-  - **Backup On-Call**: Previews and assigns the engineer scheduled for the following week (or the next available runner-up). If the primary falls ill or is occupied, the backup steps in.
-  - *Fairness Guarantee*: Serving as backup does **not** count towards primary `shifts_completed`, keeping primary rotations completely fair and balanced.
-- **Vacation & Absence Conflict Avoidance**:
+  - **Primary On-Call**: Selected via the fair *least-shifts-completed* algorithm among engineers not on leave.
+  - **Backup On-Call**: Previews and assigns the engineer scheduled for the following week (or the next available runner-up).
+  - *Fairness Guarantee*: Serving as backup does **not** increment primary `shifts_completed`.
+- **Vacation & Travel Conflict Avoidance (Workdays Only)**:
   - Ingests the shared Confluence SRE Calendar:
     `https://docs.dbildungscloud.de/display/DBH/calendar/60fe65e8-fcac-4358-bf52-e7188a5fc1c3?calendarName=SRE`
-  - Explicitly detects:
-    - **`Leave`**
-    - **`Leave (planned)`**
-    - **`Travel`**
-    - German/common terms like *Urlaub*, *Vacation*, *Abwesend*, *PTO*
-  - Automatically ignores non-absence events on the shared calendar (e.g. **`Birthdays`**, meetings, etc.).
-- **Daily Teams Notification**: Posts an Adaptive Card every weekday morning summarizing:
-  - **Primary On-Call**: Current active engineer
-  - **Backup On-Call**: Assigned secondary engineer
-  - **Active Shift Window**: e.g., `Nov 02 – Nov 09`
-  - **Next Up (Next Week)**: Preview of next week's Primary and Backup
-  - **Team Leave & Travel Status**: Summary of team members currently absent
-  - Direct links to the Confluence calendar and Betriebsaufgaben.
+  - **Weekends Excluded**: Saturday and Sunday are automatically excluded from absence calculations since Betriebsaufgaben only occur during working days (Monday–Friday). A weekend-only absence has zero impact on shift eligibility!
+  - Explicitly recognizes **`Leave`**, **`Leave (planned)`**, and **`Travel`** (and German *Urlaub*, *Abwesend*).
+  - Automatically ignores non-absence calendar banners (e.g. **`Birthdays`**, `PI`, `Daily`, `Refinement`, `Quarter Cap`).
+- **Automatic Fallback Mechanism**:
+  - If Confluence is unreachable (network/API error) or if no eligible candidate is found (e.g. all members on leave), the script falls back to assigning 2 distinct active team members at random.
+  - An attention banner is displayed on the Teams card alerting the team that a fallback assignment was used.
+- **Separation of Concerns: State Persistence (Zero Git Commits!)**:
+  - **Caller-Managed (`gh variable get / set`)**: The Python application operates purely on a local state file (`state.json`) and is decoupled from any cloud or CI API.
+  - In GitHub Actions, the workflow runner fetches and updates the repository variable `ONCALL_STATE` using the native GitHub CLI (`gh`). No git commits, no git push, and no commit log pollution!
 
 ---
 
@@ -35,7 +35,7 @@ ops-shifts/
 ├── config.yaml            # Team roster, calendar ID, vacation keywords, rotation parameters
 ├── ops_shifts.py          # Main execution script
 ├── requirements.txt       # Dependencies (icalendar, requests, PyYAML, etc.)
-├── state.json             # Persistent rotation history & shift counters (managed via git)
+├── state.json             # Local fallback state store
 ├── test_ops_shifts.py     # Unit tests
 └── README.md              # Documentation
 ```
@@ -59,8 +59,8 @@ rotation:
   timezone: "Europe/Berlin"
   shift_duration_days: 7
   shift_start_weekday: 0   # 0 = Monday
-  shift_start_hour: 9      # 09:00 Europe/Berlin
-  vacation_overlap_threshold_days: 1
+  shift_start_hour: 6      # 06:00 Europe/Berlin (CET/CEST)
+  vacation_overlap_threshold_days: 1  # Mindestanzahl an abwesenden Arbeitstagen (Mo-Fr)
 
 vacation:
   event_keywords:
@@ -72,12 +72,17 @@ vacation:
     - "abwesend"
     - "pto"
     - "holiday"
+    - "holidays"
   ignore_keywords:
     - "birthday"
     - "geburtstag"
     - "meeting"
     - "retro"
+    - "refinement"
+    - "daily"
     - "intern"
+    - "quarter cap"
+    - "pi "
 
 team:
   - name: "Alex Example"
@@ -96,14 +101,24 @@ team:
 
 The workflow is located at [`.github/workflows/ops-shifts.yaml`](file:///home/akorzhyl/git/dataport-dbildung/infra-tools/.github/workflows/ops-shifts.yaml).
 
-### Required GitHub Secrets
+- **Schedule**: Evaluated on **Mondays** and **Fridays** at `05:00 UTC` (06:00 CET).
+- **Permissions**:
+  ```yaml
+  permissions:
+    contents: read
+    variables: write
+  ```
+  Enables updating the `ONCALL_STATE` repository variable without any git commits.
 
-Configure in repository settings (`Settings -> Secrets and variables -> Actions`):
+### Required GitHub Secrets & Variables
 
-| Secret Name | Description |
-| :--- | :--- |
-| `CONFLUENCE_PAT` | Confluence Personal Access Token with read access to the SRE calendar |
-| `TEAMS_WEBHOOK_URL` | Microsoft Teams incoming webhook or Power Automate workflow URL |
+In repository settings under **Settings → Secrets and variables → Actions**:
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `CONFLUENCE_PAT` | Secret | Personal Access Token with read access to the SRE calendar |
+| `TEAMS_WEBHOOK_URL` | Secret | Full Microsoft Teams Workflows webhook URL (with `api-version` and `sig`) |
+| `ONCALL_STATE` | Variable | (Optional) Automatically initialized/updated by the runner |
 
 ---
 
@@ -113,10 +128,14 @@ Configure in repository settings (`Settings -> Secrets and variables -> Actions`
 # Run unit test suite
 python3 -m unittest ops-shifts/test_ops_shifts.py
 
-# Run dry run with simulated calendar
-python3 ops-shifts/ops_shifts.py --dry-run --mock-calendar
+# Simulate Monday morning Schichtwechsel (dry-run)
+python3 ops-shifts/ops_shifts.py --dry-run --mock-calendar --current-time 2026-11-09T06:00:00
 
-# Run dry run with live Confluence credentials
+# Simulate Friday morning Forecast (dry-run)
+python3 ops-shifts/ops_shifts.py --dry-run --mock-calendar --current-time 2026-11-06T06:00:00
+
+# Live run with real credentials
 export CONFLUENCE_PAT="your-token"
-python3 ops-shifts/ops_shifts.py --dry-run
+export TEAMS_WEBHOOK_URL='https://...'
+python3 ops-shifts/ops_shifts.py
 ```
