@@ -240,8 +240,8 @@ team:
         card_fri = manager_fri.build_teams_adaptive_card(current_shift, next_preview, False, [])
         json_fri = json.dumps(card_fri, ensure_ascii=False)
         self.assertIn("Vorschau", json_fri)
-        self.assertIn("Aktuell zuständig (Primär):", json_fri)
-        self.assertIn("Nächste Woche ab Montag (Primär):", json_fri)
+        self.assertIn("Aktuell zuständig:", json_fri)
+        self.assertIn("Nächste Woche zuständig:", json_fri)
         self.assertIn("Hinweis zur Folgewoche:", json_fri)
 
         # 2. Monday test (Schichtwechsel)
@@ -254,7 +254,7 @@ team:
         card_mon = manager_mon.build_teams_adaptive_card(current_shift, next_preview, True, [])
         json_mon = json.dumps(card_mon, ensure_ascii=False)
         self.assertIn("SRE Betriebsaufgaben: Schichtwechsel", json_mon)
-        self.assertIn("Betriebsaufgaben (Primär):", json_mon)
+        self.assertIn("Primär:", json_mon)
         self.assertIn("Folgewoche (Vorschau):", json_mon)
 
     def test_weekend_leave_excluded_and_friday_calculation(self):

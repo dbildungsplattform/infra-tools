@@ -766,12 +766,15 @@ class OpsShiftsManager:
         today_str = f"{weekday_name}, {self.now.day:02d}. {month_name} {self.now.year}"
 
         curr_start_dt = dt.date.fromisoformat(current_shift["start_date"])
-        curr_end_dt = dt.date.fromisoformat(current_shift["end_date"])
+        # In reality, Betriebsaufgaben are active during the work week (Monday to Friday)
+        curr_work_end_dt = curr_start_dt + dt.timedelta(days=4)
         next_start_dt = dt.date.fromisoformat(next_preview["start_date"])
+        next_work_end_dt = next_start_dt + dt.timedelta(days=4)
 
         curr_start = f"{curr_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_start_dt.month]}"
-        curr_end = f"{curr_end_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_end_dt.month]} {curr_end_dt.year}"
-        next_start_str = f"{next_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[next_start_dt.month]} {next_start_dt.year}"
+        curr_work_end = f"{curr_work_end_dt.day:02d}. {GERMAN_MONTHS_SHORT[curr_work_end_dt.month]} {curr_work_end_dt.year}"
+        next_start = f"{next_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[next_start_dt.month]}"
+        next_work_end = f"{next_work_end_dt.day:02d}. {GERMAN_MONTHS_SHORT[next_work_end_dt.month]} {next_work_end_dt.year}"
 
         primary_str = f"**{current_shift['engineer']}** ({current_shift.get('email', '')})"
         backup_str = f"**{current_shift.get('backup', 'Keiner')}** ({current_shift.get('backup_email', '')})"
@@ -779,40 +782,72 @@ class OpsShiftsManager:
         next_backup_str = f"**{next_preview.get('backup', 'Keiner')}** ({next_preview.get('backup_email', '')})"
 
         if is_friday:
-            title = "🔮 SRE Betriebsaufgaben: Wochenausklang & Vorschau"
-            subtitle = "Wochenausklang und Vorschau auf die Betriebsaufgaben der kommenden Arbeitswoche (Montag–Freitag)."
+            title = "🔮 SRE Betriebsaufgaben: Vorschau"
+            subtitle = "Vorschau auf die Folgewoche"
             accent_color = "accent"
             facts = [
                 {"title": "Datum:", "value": today_str},
-                {"title": "Aktuell zuständig (Primär):", "value": primary_str},
-                {"title": "Aktuell zuständig (Backup):", "value": backup_str},
-                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_end} (Arbeitszeitende)"},
-                {"title": "Nächste Woche ab Montag (Primär):", "value": next_primary_str},
-                {"title": "Nächste Woche ab Montag (Backup):", "value": next_backup_str},
-                {"title": "Schichtstart Folgewoche:", "value": f"Montag, {next_start_str} (06:00 Uhr)"},
+                {"title": "Aktuell zuständig:", "value": primary_str},
+                {"title": "Aktuell im Backup:", "value": backup_str},
+                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_work_end} (Dienstschluss)"},
+                {"title": "Nächste Woche zuständig:", "value": next_primary_str},
+                {"title": "Nächste Woche im Backup:", "value": next_backup_str},
+                {"title": "Nächste Schicht:", "value": f"{next_start} – {next_work_end}"},
             ]
-            vac_header = "**🌴 Geplante Abwesenheiten für die Folgewoche (Confluence)**"
+            vac_header = "**🌴 Geplante Abwesenheiten für die Folgewoche**"
             # In Friday forecast, show vacations for the upcoming week
             shift_start_filter = next_start_dt
-            shift_end_filter = dt.date.fromisoformat(next_preview["end_date"])
-        else:
-            title = "🔄 SRE Betriebsaufgaben: Schichtwechsel" if is_monday or is_handoff_day else "☀️ SRE Betriebsaufgaben: Übersicht"
-            subtitle = "Wöchentlicher Schichtwechsel für die SRE-Betriebsaufgaben (Mo–Fr, 06:00 CET)."
-            accent_color = "warning" if is_monday or is_handoff_day else "default"
+            shift_end_filter = next_work_end_dt
+        elif is_monday or is_handoff_day:
+            title = "🔄 SRE Betriebsaufgaben: Schichtwechsel"
+            subtitle = "Wöchentliche Schichtübergabe"
+            accent_color = "warning"
             facts = [
                 {"title": "Datum:", "value": today_str},
-                {"title": "Betriebsaufgaben (Primär):", "value": primary_str},
-                {"title": "Betriebsaufgaben (Backup):", "value": backup_str},
-                {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_end}"},
+                {"title": "Primär:", "value": primary_str},
+                {"title": "Backup:", "value": backup_str},
+                {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_work_end}"},
                 {"title": "Folgewoche (Vorschau):", "value": f"{next_primary_str} | {next_backup_str}"},
             ]
-            vac_header = "**🌴 Abwesenheiten & Urlaub im Team (Confluence)**"
+            vac_header = "**🌴 Abwesenheiten & Urlaub im Team**"
             shift_start_filter = curr_start_dt
-            shift_end_filter = curr_end_dt
+            shift_end_filter = curr_work_end_dt
+        else:
+            title = "☀️ SRE Betriebsaufgaben: Übersicht"
+            subtitle = "Aktuelle Zuständigkeiten"
+            accent_color = "default"
+            facts = [
+                {"title": "Datum:", "value": today_str},
+                {"title": "Primär:", "value": primary_str},
+                {"title": "Backup:", "value": backup_str},
+                {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_work_end}"},
+                {"title": "Folgewoche (Vorschau):", "value": f"{next_primary_str} | {next_backup_str}"},
+            ]
+            vac_header = "**🌴 Abwesenheiten & Urlaub im Team**"
+            shift_start_filter = curr_start_dt
+            shift_end_filter = curr_work_end_dt
 
-        # Filter leave events for the relevant window
+        # Filter leave events for the relevant window: ONLY include real leaves/vacations/travel
+        vac_conf = self.config.get("vacation", {})
+        default_keywords = ["leave", "leave (planned)", "travel", "urlaub", "vacation", "abwesend", "pto", "holiday"]
+        event_keywords = [k.lower() for k in vac_conf.get("event_keywords", default_keywords)]
+        default_ignores = ["birthday", "geburtstag", "meeting", "retro", "intern", "daily", "refinement", "pi ", "quarter cap"]
+        ignore_keywords = [k.lower() for k in vac_conf.get("ignore_keywords", default_ignores)]
+
         vacations_now = []
         for ev in events:
+            summary = ev.get("summary", "").lower()
+            categories = [c.lower() for c in ev.get("categories", [])]
+            combined_text = f"{summary} {' '.join(categories)}"
+
+            # Exclude meetings, standups, birthdays, PI banners
+            if any(ign in combined_text for ign in ignore_keywords):
+                continue
+
+            # Must match leave/vacation/travel keywords
+            if not any(kw in combined_text for kw in event_keywords):
+                continue
+
             if max(ev["start"], shift_start_filter) <= min(ev["end"], shift_end_filter):
                 ev_s = ev["start"]
                 ev_e = ev["end"]
@@ -839,6 +874,7 @@ class OpsShiftsManager:
                         "text": subtitle,
                         "isSubtle": True,
                         "spacing": "None",
+                        "wrap": True,
                     },
                 ],
             },
