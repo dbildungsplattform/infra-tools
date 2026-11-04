@@ -953,7 +953,7 @@ class OpsShiftsManager:
                     },
                     {
                         "type": "TextBlock",
-                        "text": "Der Confluence-Kalender war nicht erreichbar oder es konnte keine reguläre Person ermittelt werden. Die Zuweisung erfolgte per Zufallsauswahl aus dem Team. Bitte prüft die Einteilung!",
+                        "text": "Der Confluence-Kalender war nicht erreichbar oder es konnte keine reguläre Person ermittelt werden. Die Zuweisung erfolgte per Zufallsauswahl aus dem Team.",
                         "wrap": True,
                     },
                 ],
