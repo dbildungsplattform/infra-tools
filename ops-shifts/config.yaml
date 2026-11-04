@@ -1,0 +1,38 @@
+# Configuration for SRE On-Call Shift Rotation & Teams Notifications
+
+confluence:
+  base_url: "https://docs.dbildungscloud.de"
+  calendar_id: "60fe65e8-fcac-4358-bf52-e7188a5fc1c3"
+  calendar_name: "SRE"
+  calendar_page_url: "https://docs.dbildungscloud.de/display/DBH/calendar/60fe65e8-fcac-4358-bf52-e7188a5fc1c3?calendarName=SRE"
+
+teams:
+  channel_name: "SRE Operations"
+  runbook_url: "https://docs.dbildungscloud.de/display/PROD/SRE+Runbooks"
+
+rotation:
+  timezone: "Europe/Berlin"
+  # Duration of each shift in days
+  shift_duration_days: 7
+  # Shift change day: 0 = Monday, 6 = Sunday
+  shift_start_weekday: 0
+  # Shift change hour in local time (e.g. 9 for 09:00 Europe/Berlin)
+  shift_start_hour: 9
+  # Minimum days of overlapping vacation during a shift to mark someone unavailable
+  vacation_overlap_threshold_days: 1
+
+# Team members participating in the on-call rotation.
+# 'aliases' are matched against Confluence calendar event summaries (case-insensitive).
+team:
+  - name: "Alex Example"
+    aliases: ["Alex", "Example", "aexample"]
+    teams_email: "alex.example@dbildungscloud.de"
+    active: true
+  - name: "Jordan Sample"
+    aliases: ["Jordan", "Sample", "jsample"]
+    teams_email: "jordan.sample@dbildungscloud.de"
+    active: true
+  - name: "Morgan Test"
+    aliases: ["Morgan", "Test", "mtest"]
+    teams_email: "morgan.test@dbildungscloud.de"
+    active: true
