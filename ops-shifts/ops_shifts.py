@@ -774,7 +774,7 @@ class OpsShiftsManager:
                 {"title": "Datum:", "value": today_str},
                 {"title": "Aktuell zuständig:", "value": primary_str},
                 {"title": "Aktuell im Backup:", "value": backup_str},
-                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_work_end} (Dienstschluss)"},
+                {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_work_end}"},
                 {"title": "Nächste Woche zuständig:", "value": next_primary_str},
                 {"title": "Nächste Woche im Backup:", "value": next_backup_str},
                 {"title": "Nächste Schicht:", "value": f"{next_start} – {next_work_end}"},
@@ -945,7 +945,7 @@ class OpsShiftsManager:
             },
         ])
 
-        if is_friday:
+        if effective_mode == "vorschau" or (effective_mode == "auto" and is_friday):
             body.append({
                 "type": "TextBlock",
                 "text": "💡 *Bitte prüft eure Verfügbarkeit für nächste Woche. Falls ein Schichttausch nötig ist, sprecht euch bitte rechtzeitig ab.*",
