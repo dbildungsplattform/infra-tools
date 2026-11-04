@@ -4,11 +4,11 @@ confluence:
   base_url: "https://docs.dbildungscloud.de"
   calendar_id: "60fe65e8-fcac-4358-bf52-e7188a5fc1c3"
   calendar_name: "SRE"
-  calendar_page_url: "https://docs.dbildungscloud.de/display/DBH/calendar/60fe65e8-fcac-4358-bf52-e7188a5fc1c3?calendarName=SRE"
+  calendar_page_url: "https://docs.dbildungscloud.de/spaces/ST/overview"
 
 teams:
   channel_name: "SRE Operations"
-  runbook_url: "https://docs.dbildungscloud.de/display/PROD/SRE+Runbooks"
+  runbook_url: "https://docs.dbildungscloud.de/spaces/ST/pages/534937640/SRE+Betriebsaufgaben+OPS"
 
 rotation:
   timezone: "Europe/Berlin"
