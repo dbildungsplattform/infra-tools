@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       card_type:
-        description: "Kartentyp / Vorlage (auto = Wochentag-basiert: Mo=Schichtwechsel, Fr=Vorschau, sonst=Übersicht)"
+        description: "Kartentyp / Vorlage (auto, uebersicht, schichtwechsel, vorschau)"
         type: choice
         options:
           - "auto"
@@ -32,9 +32,6 @@ concurrency:
 jobs:
   run-ops-shifts:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      variables: write  # Enables updating the ONCALL_STATE repository variable (zero git commits)
 
     steps:
       - name: Checkout repository
@@ -56,17 +53,23 @@ jobs:
         run: |
           python -m unittest ops-shifts/test_ops_shifts.py
 
-      - name: Retrieve state from GitHub Variable
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+      - name: Restore on-call state from cache
+        uses: actions/cache@v4
+        with:
+          path: ops-shifts/state.json
+          key: ops-shifts-state-${{ github.run_id }}
+          restore-keys: |
+            ops-shifts-state-
+
+      - name: Initialize state if not cached
         run: |
           mkdir -p ops-shifts
-          if gh variable get ONCALL_STATE > ops-shifts/state.json 2>/dev/null; then
-            echo "Successfully loaded ONCALL_STATE from repository variables."
-          else
-            echo "Variable ONCALL_STATE not found or empty. Initializing with default state."
+          if [ ! -f ops-shifts/state.json ]; then
+            echo "No cached state found. Initializing empty state."
             echo "{}" > ops-shifts/state.json
+          else
+            echo "Loaded cached state:"
+            cat ops-shifts/state.json
           fi
 
       - name: Execute Ops Shifts Manager
@@ -86,14 +89,3 @@ jobs:
           fi
 
           python ops-shifts/ops_shifts.py --config ops-shifts/config.yaml --state ops-shifts/state.json $EXTRA_ARGS
-
-      - name: Persist updated state to GitHub Variable
-        if: ${{ !inputs.dry_run }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          if [ -s ops-shifts/state.json ]; then
-            gh variable set ONCALL_STATE < ops-shifts/state.json
-            echo "Successfully updated GitHub Variable ONCALL_STATE."
-          fi
