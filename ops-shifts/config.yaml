@@ -21,8 +21,27 @@ rotation:
   # Minimum days of overlapping vacation during a shift to mark someone unavailable
   vacation_overlap_threshold_days: 1
 
+vacation:
+  # Event types and keywords that indicate absence/vacation on the Confluence calendar
+  event_keywords:
+    - "leave"
+    - "leave (planned)"
+    - "travel"
+    - "urlaub"
+    - "vacation"
+    - "abwesend"
+    - "pto"
+    - "holiday"
+  # Non-absence event types to ignore
+  ignore_keywords:
+    - "birthday"
+    - "geburtstag"
+    - "meeting"
+    - "retro"
+    - "intern"
+
 # Team members participating in the on-call rotation.
-# 'aliases' are matched against Confluence calendar event summaries (case-insensitive).
+# 'aliases' are matched against Confluence calendar event summaries/attendees (case-insensitive).
 team:
   - name: "Alex Example"
     aliases: ["Alex", "Example", "aexample"]

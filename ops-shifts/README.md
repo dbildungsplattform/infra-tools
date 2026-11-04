@@ -4,11 +4,27 @@ Automated on-call shift rotation and daily Microsoft Teams notification bot for 
 
 ## Overview
 
-- **Weekly Rotation**: Rotates on-call shifts every Monday morning.
-- **Fair Scheduling**: Uses a *least-shifts-completed* algorithm with tie-breaking based on longest time since last shift.
-- **Vacation Conflict Avoidance**: Reads the team's shared vacation calendar on Confluence (`https://docs.dbildungscloud.de/display/DBH/calendar/60fe65e8-fcac-4358-bf52-e7188a5fc1c3?calendarName=SRE`) and automatically skips members who are on leave during an upcoming shift.
-- **Daily Teams Notification**: Posts an Adaptive Card every weekday morning summarizing who is on call, active shift dates, upcoming on-call engineer for next week, and quick links to runbooks and the Confluence calendar.
-- **Self-Balancing**: When an engineer returns from vacation, their shift count remains lower, ensuring they naturally pick up upcoming shifts without manual debt tracking.
+- **Weekly Rotation**: Rotates on-call shifts every Monday morning at 09:00 (Europe/Berlin).
+- **Two Roles Per Shift (Primary + Backup)**:
+  - **Primary On-Call**: Handled by the fair *least-shifts-completed* algorithm.
+  - **Backup On-Call**: Previews and assigns the engineer scheduled for the following week (or the next available runner-up). If the primary falls ill or is occupied, the backup steps in.
+  - *Fairness Guarantee*: Serving as backup does **not** count towards primary `shifts_completed`, keeping primary rotations completely fair and balanced.
+- **Vacation & Absence Conflict Avoidance**:
+  - Ingests the shared Confluence SRE Calendar:
+    `https://docs.dbildungscloud.de/display/DBH/calendar/60fe65e8-fcac-4358-bf52-e7188a5fc1c3?calendarName=SRE`
+  - Explicitly detects:
+    - **`Leave`**
+    - **`Leave (planned)`**
+    - **`Travel`**
+    - German/common terms like *Urlaub*, *Vacation*, *Abwesend*, *PTO*
+  - Automatically ignores non-absence events on the shared calendar (e.g. **`Birthdays`**, meetings, etc.).
+- **Daily Teams Notification**: Posts an Adaptive Card every weekday morning summarizing:
+  - **Primary On-Call**: Current active engineer
+  - **Backup On-Call**: Assigned secondary engineer
+  - **Active Shift Window**: e.g., `Nov 02 – Nov 09`
+  - **Next Up (Next Week)**: Preview of next week's Primary and Backup
+  - **Team Leave & Travel Status**: Summary of team members currently absent
+  - Direct links to the Confluence calendar and SRE runbooks.
 
 ---
 
@@ -16,9 +32,9 @@ Automated on-call shift rotation and daily Microsoft Teams notification bot for 
 
 ```
 ops-shifts/
-├── config.yaml            # Team members, calendar ID, timezone, rotation preferences
+├── config.yaml            # Team roster, calendar ID, vacation keywords, rotation parameters
 ├── ops_shifts.py          # Main execution script
-├── requirements.txt       # Python dependencies (icalendar, requests, PyYAML, etc.)
+├── requirements.txt       # Dependencies (icalendar, requests, PyYAML, etc.)
 ├── state.json             # Persistent rotation history & shift counters (managed via git)
 ├── test_ops_shifts.py     # Unit tests
 └── README.md              # Documentation
@@ -46,6 +62,23 @@ rotation:
   shift_start_hour: 9      # 09:00 Europe/Berlin
   vacation_overlap_threshold_days: 1
 
+vacation:
+  event_keywords:
+    - "leave"
+    - "leave (planned)"
+    - "travel"
+    - "urlaub"
+    - "vacation"
+    - "abwesend"
+    - "pto"
+    - "holiday"
+  ignore_keywords:
+    - "birthday"
+    - "geburtstag"
+    - "meeting"
+    - "retro"
+    - "intern"
+
 team:
   - name: "Alex Example"
     aliases: ["Alex", "Example", "aexample"]
@@ -65,47 +98,25 @@ The workflow is located at [`.github/workflows/ops-shifts.yaml`](file:///home/ak
 
 ### Required GitHub Secrets
 
-Configure these in repository settings (`Settings -> Secrets and variables -> Actions`):
+Configure in repository settings (`Settings -> Secrets and variables -> Actions`):
 
 | Secret Name | Description |
 | :--- | :--- |
 | `CONFLUENCE_PAT` | Confluence Personal Access Token with read access to the SRE calendar |
 | `TEAMS_WEBHOOK_URL` | Microsoft Teams incoming webhook or Power Automate workflow URL |
 
-### Schedule & Manual Dispatch
-- **Schedule**: Evaluated Mon–Fri at `07:30 UTC` (08:30 CET / 09:30 CEST).
-- **Manual Trigger**: Can be executed manually via the GitHub Actions **Run workflow** button with options for `dry_run`, `force_rotation`, and `mock_calendar`.
-
 ---
 
 ## Local Development & Testing
 
-### 1. Install dependencies
 ```bash
-pip install -r ops-shifts/requirements.txt
-```
+# Run unit test suite
+python3 -m unittest ops-shifts/test_ops_shifts.py
 
-### 2. Run unit tests
-```bash
-python -m unittest ops-shifts/test_ops_shifts.py
-```
+# Run dry run with simulated calendar
+python3 ops-shifts/ops_shifts.py --dry-run --mock-calendar
 
-### 3. Run dry-run with mock calendar
-```bash
-python ops-shifts/ops_shifts.py --dry-run --mock-calendar
-```
-
-### 4. Run dry-run with live Confluence calendar
-```bash
+# Run dry run with live Confluence credentials
 export CONFLUENCE_PAT="your-token"
-python ops-shifts/ops_shifts.py --dry-run
+python3 ops-shifts/ops_shifts.py --dry-run
 ```
-
----
-
-## Manual Overrides & Swapping Shifts
-
-If two team members want to swap shifts or if an emergency change is needed, simply edit `ops-shifts/state.json`:
-- Change `"engineer"` under `"current_shift"` to the new person.
-- Adjust `"shifts_completed"` in `"member_stats"` if desired.
-- Commit and push to git. The notifier will immediately use the updated state on the next scheduled run.
