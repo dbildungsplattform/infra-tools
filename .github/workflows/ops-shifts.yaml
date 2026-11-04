@@ -1,6 +1,9 @@
 name: OPS Shift Rotation & Teams Notifier
 
 on:
+  push:
+    branches:
+      - feat/OPS-12388-ops-shifts
   schedule:
     # Runs Monday and Friday at 05:00 UTC.
     # In Europe/Berlin, this corresponds to 06:00 CET (standard time) or 07:00 CEST (summer time).
