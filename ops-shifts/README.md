@@ -23,8 +23,8 @@ Automated on-call shift rotation, vacation conflict avoidance via Confluence, an
   - If Confluence is unreachable (network/API error) or if no eligible candidate is found (e.g. all members on leave), the script falls back to assigning 2 distinct active team members at random.
   - An attention banner is displayed on the Teams card alerting the team that a fallback assignment was used.
 - **Separation of Concerns: State Persistence (Zero Git Commits!)**:
-  - **Caller-Managed (`gh variable get / set`)**: The Python application operates purely on a local state file (`state.json`) and is decoupled from any cloud or CI API.
-  - In GitHub Actions, the workflow runner fetches and updates the repository variable `ONCALL_STATE` using the native GitHub CLI (`gh`). No git commits, no git push, and no commit log pollution!
+  - **Caller-Managed (`actions/cache`)**: The Python application operates purely on a local state file (`ops-shifts/state.json`) and is decoupled from any cloud or CI API.
+  - In GitHub Actions, the workflow runner persists and restores `state.json` across workflow runs via `actions/cache`. No git commits, no git push, and no commit log pollution!
 
 ---
 
@@ -42,103 +42,42 @@ ops-shifts/
 
 ---
 
-## Configuration (`config.yaml`)
-
-```yaml
-confluence:
-  base_url: "https://docs.dbildungscloud.de"
-  calendar_id: "60fe65e8-fcac-4358-bf52-e7188a5fc1c3"
-  calendar_name: "SRE"
-  calendar_page_url: "https://docs.dbildungscloud.de/spaces/ST/overview"
-
-teams:
-  channel_name: "SRE Operations"
-  betriebsaufgaben_url: "https://docs.dbildungscloud.de/spaces/ST/pages/534937640/SRE+Betriebsaufgaben+OPS"
-
-rotation:
-  timezone: "Europe/Berlin"
-  shift_duration_days: 7
-  shift_start_weekday: 0   # 0 = Monday
-  shift_start_hour: 6      # 06:00 Europe/Berlin (CET/CEST)
-  vacation_overlap_threshold_days: 1  # Mindestanzahl an abwesenden Arbeitstagen (Mo-Fr)
-
-vacation:
-  event_keywords:
-    - "leave"
-    - "leave (planned)"
-    - "travel"
-    - "urlaub"
-    - "vacation"
-    - "abwesend"
-    - "pto"
-    - "holiday"
-    - "holidays"
-  ignore_keywords:
-    - "birthday"
-    - "geburtstag"
-    - "meeting"
-    - "retro"
-    - "refinement"
-    - "daily"
-    - "intern"
-    - "quarter cap"
-    - "pi "
-
-team:
-  - name: "Alex Example"
-    aliases: ["Alex", "Example", "aexample"]
-    teams_email: "alex.example@dbildungscloud.de"
-    active: true
-  - name: "Jordan Sample"
-    aliases: ["Jordan", "Sample", "jsample"]
-    teams_email: "jordan.sample@dbildungscloud.de"
-    active: true
-```
-
----
-
 ## GitHub Actions Deployment
 
 The workflow is located at [`.github/workflows/ops-shifts.yaml`](file:///home/akorzhyl/git/dataport-dbildung/infra-tools/.github/workflows/ops-shifts.yaml).
 
 - **Schedule**: Evaluated on **Mondays** and **Fridays** at `05:00 UTC` (06:00 CET).
-- **Permissions**:
-  ```yaml
-  permissions:
-    contents: read
-    variables: write
-  ```
-  Enables updating the `ONCALL_STATE` repository variable without any git commits.
+- **State Storage**: Uses `actions/cache` to persist `ops-shifts/state.json` seamlessly across workflow runs without repository commits or extra tokens.
 
-### Required GitHub Secrets & Variables
+### Required GitHub Secrets
 
-In repository settings under **Settings → Secrets and variables → Actions**:
+In repository settings under **Settings → Secrets and variables → Actions → Secrets**:
 
 | Name | Type | Description |
 | :--- | :--- | :--- |
 | `CONFLUENCE_PAT` | Secret | Personal Access Token with read access to the SRE calendar |
 | `TEAMS_WEBHOOK_URL` | Secret | Full Microsoft Teams Workflows webhook URL (with `api-version` and `sig`) |
-| `ONCALL_STATE` | Variable | (Optional) Automatically initialized/updated by the runner |
 
 ---
 
-## Local Development & Testing
+## Local Testing
 
 ```bash
-# Run unit test suite
+# 1. Set environment variables (single quotes prevent URL-escaping issues)
+export CONFLUENCE_PAT="<your-confluence-pat>"
+export TEAMS_WEBHOOK_URL='<your-teams-webhook-url>'
+
+# 2. Run unit tests
 python3 -m unittest ops-shifts/test_ops_shifts.py
 
-# Simulate Monday morning Schichtwechsel (dry-run)
-python3 ops-shifts/ops_shifts.py --dry-run --card-type schichtwechsel
+# 3. Dry-Run simulation (no Teams message, no state update)
+python3 ops-shifts/ops_shifts.py --dry-run
 
-# Simulate Friday morning Vorschau (dry-run)
-python3 ops-shifts/ops_shifts.py --dry-run --card-type vorschau
+# 4. Test different Teams card templates (live post)
+python3 ops-shifts/ops_shifts.py --card-type uebersicht      # Default / Übersicht
+python3 ops-shifts/ops_shifts.py --card-type schichtwechsel # Monday shift handover
+python3 ops-shifts/ops_shifts.py --card-type vorschau       # Friday preview
 
-# Simulate mid-week Übersicht (dry-run)
-python3 ops-shifts/ops_shifts.py --dry-run --card-type uebersicht
-
-# Live run with real credentials
-export CONFLUENCE_PAT="your-token"
-export TEAMS_WEBHOOK_URL='https://...'
-python3 ops-shifts/ops_shifts.py
+# 5. Simulate forced rotation without saving
+python3 ops-shifts/ops_shifts.py --force-rotation --dry-run
 ```
