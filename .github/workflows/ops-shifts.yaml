@@ -52,6 +52,22 @@ jobs:
         run: |
           python -m unittest ops-shifts/test_ops_shifts.py
 
+      # =========================================================================
+      # STATE PERSISTENCE DESIGN DECISION: actions/cache
+      # -------------------------------------------------------------------------
+      # Why actions/cache over alternatives:
+      # 1. Zero Infrastructure & Zero Overhead: No external cloud dependencies, IAM
+      #    roles, credentials to rotate, or Terraform maintenance for a ~1KB JSON file.
+      # 2. Least Privilege Security: Works out-of-the-box with default GITHUB_TOKEN.
+      #    Writing GitHub Repo Variables (gh variable set) requires elevated admin PATs,
+      #    which introduces unnecessary security/credential management overhead.
+      # 3. Clean Git History: Avoids automated Git commits/pushes cluttering branch logs.
+      # 4. Low Risk of Expiration: Cache has a 7-day inactivity TTL. Since the workflow
+      #    runs bi-weekly (every 3-4 days), the cache is continuously refreshed.
+      # 5. Graceful Fallback: Even if evicted (e.g. repo paused for >7 days), state loss is
+      #    non-critical: state resets to defaults and automatically re-bootstraps
+      #    using Confluence calendar availability without service disruption.
+      # =========================================================================
       - name: Restore on-call state from cache
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
