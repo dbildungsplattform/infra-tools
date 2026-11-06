@@ -44,7 +44,7 @@ ops-shifts/
 
 ## GitHub Actions Deployment
 
-The workflow is located at [`.github/workflows/ops-shifts.yaml`](file:///home/akorzhyl/git/dataport-dbildung/infra-tools/.github/workflows/ops-shifts.yaml).
+The workflow is located at [`.github/workflows/ops-shifts.yaml`].
 
 - **Schedule**: Evaluated on **Mondays** and **Fridays** at `05:00 UTC` (06:00 CET).
 - **State Storage**: Uses `actions/cache` to persist `ops-shifts/state.json` seamlessly across workflow runs without repository commits or extra tokens.
