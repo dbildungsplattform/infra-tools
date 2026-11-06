@@ -242,6 +242,9 @@ team:
         self.assertIn("Vorschau", json_fri)
         self.assertIn("Aktuell zuständig:", json_fri)
         self.assertIn("Nächste Woche zuständig:", json_fri)
+        self.assertIn("<at>Bob Sysadmin</at>", json_fri)
+        self.assertIn("<at>Charlie SRE</at>", json_fri)
+        self.assertIn("msteams", json_fri)
 
         # 2. Monday test (Schichtwechsel)
         manager_mon = OpsShiftsManager(
@@ -255,6 +258,9 @@ team:
         self.assertIn("SRE Betriebsaufgaben: Schichtwechsel", json_mon)
         self.assertIn("Primär:", json_mon)
         self.assertIn("Folgewoche (Vorschau):", json_mon)
+        self.assertIn("<at>Alice Developer</at>", json_mon)
+        self.assertIn("<at>Bob Sysadmin</at>", json_mon)
+        self.assertIn("msteams", json_mon)
 
     def test_weekend_leave_excluded_and_friday_calculation(self):
         """Weekend days (Sat/Sun) must be excluded from workday absence calculations."""

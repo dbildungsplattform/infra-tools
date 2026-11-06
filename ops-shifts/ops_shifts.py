@@ -679,27 +679,51 @@ class OpsShiftsManager:
             )
 
         # Pre-calculate preview for next week
+        # Invariant: If current_shift has a valid backup who is not the current primary,
+        # that backup is scheduled to be next week's primary!
+        current_backup_name = current_shift.get("backup")
+        current_primary_name = current_shift.get("engineer")
+        designated_next_primary = None
+        if current_backup_name and current_backup_name != current_primary_name:
+            designated_next_primary = next((m for m in team if m["name"] == current_backup_name), None)
+
         if self.calendar_unreachable:
-            next_primary, next_backup, prev_note = self.pick_fallback_candidates(
-                team, "Confluence-Kalender war nicht erreichbar"
-            )
+            if designated_next_primary:
+                next_primary = designated_next_primary
+                # Pick backup from remaining team members excluding next_primary
+                rem_pool = [m for m in team if m["name"] != next_primary["name"]]
+                next_backup = random.choice(rem_pool) if rem_pool else next_primary
+                prev_note = "⚠️ Zufallsauswahl (Confluence-Kalender war nicht erreichbar)"
+            else:
+                next_primary, next_backup, prev_note = self.pick_fallback_candidates(
+                    team, "Confluence-Kalender war nicht erreichbar"
+                )
         else:
-            next_primary, next_primary_note = self.pick_fair_candidate(
-                team, calendar_events, next_shift_start, next_shift_end
-            )
+            if designated_next_primary:
+                next_primary = designated_next_primary
+                prev_note = ""
+            else:
+                # Exclude current primary from being picked directly again next week if pool permits
+                cand_pool = [m for m in team if m["name"] != current_primary_name] if len(team) > 1 else team
+                next_primary, next_primary_note = self.pick_fair_candidate(
+                    cand_pool, calendar_events, next_shift_start, next_shift_end
+                )
+                prev_note = next_primary_note or ""
+
             if not next_primary:
                 next_primary, next_backup, prev_note = self.pick_fallback_candidates(
                     team, "Alle Mitglieder in Folgewoche abwesend"
                 )
             else:
-                prev_note = next_primary_note
                 week_after_start = next_shift_end
                 week_after_end = week_after_start + dt.timedelta(days=self.config.get("rotation", {}).get("shift_duration_days", 7))
-                week_after_primary, _ = self.pick_fair_candidate(team, calendar_events, week_after_start, week_after_end)
+                # Preview primary for 2 weeks ahead (excluding next_primary)
+                cand_pool_after = [m for m in team if m["name"] != next_primary["name"]] if len(team) > 1 else team
+                week_after_primary, _ = self.pick_fair_candidate(cand_pool_after, calendar_events, week_after_start, week_after_end)
                 next_backup, _ = self.pick_backup_candidate(
                     team, next_primary, week_after_primary, calendar_events, next_shift_start, next_shift_end
                 )
-                if not next_backup:
+                if not next_backup or next_backup["name"] == next_primary["name"]:
                     pool = [m for m in team if m["name"] != next_primary["name"]]
                     next_backup = random.choice(pool) if pool else next_primary
 
@@ -760,23 +784,60 @@ class OpsShiftsManager:
         next_start = f"{next_start_dt.day:02d}. {GERMAN_MONTHS_SHORT[next_start_dt.month]}"
         next_work_end = f"{next_work_end_dt.day:02d}. {GERMAN_MONTHS_SHORT[next_work_end_dt.month]} {next_work_end_dt.year}"
 
-        primary_str = f"**{current_shift['engineer']}** ({current_shift.get('email', '')})"
-        backup_str = f"**{current_shift.get('backup', 'Keiner')}** ({current_shift.get('backup_email', '')})"
-        next_primary_str = f"**{next_preview['engineer']}** ({next_preview.get('email', '')})"
-        next_backup_str = f"**{next_preview.get('backup', 'Keiner')}** ({next_preview.get('backup_email', '')})"
+        curr_eng = current_shift["engineer"]
+        curr_email = current_shift.get("email", "")
+        curr_backup = current_shift.get("backup", "Keiner")
+        curr_backup_email = current_shift.get("backup_email", "")
+
+        next_eng = next_preview["engineer"]
+        next_email = next_preview.get("email", "")
+        next_backup = next_preview.get("backup", "Keiner")
+        next_backup_email = next_preview.get("backup_email", "")
+
+        # Default string without mention (Name + Email)
+        primary_str = f"**{curr_eng}** ({curr_email})"
+        backup_str = f"**{curr_backup}** ({curr_backup_email})"
+        next_primary_str = f"**{next_eng}** ({next_email})"
+        next_backup_str = f"**{next_backup}** ({next_backup_email})"
+
+        # Mention helper: returns <at>Name</at> and entity if email is present
+        def make_mention(name: str, email: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+            if not email or name in ("Keiner", "Niemand", "None"):
+                return f"**{name}**", None
+            tag = f"<at>{name}</at>"
+            entity = {
+                "type": "mention",
+                "text": tag,
+                "mentioned": {
+                    "id": email,
+                    "name": name,
+                },
+            }
+            return tag, entity
+
+        mention_entities: List[Dict[str, Any]] = []
 
         effective_mode = (self.card_type or "auto").lower()
         if effective_mode == "vorschau" or (effective_mode == "auto" and is_friday):
             title = "🔮 SRE Betriebsaufgaben: Vorschau"
             subtitle = "Vorschau auf die Folgewoche"
             accent_color = "accent"
+
+            # Friday / Vorschau: Mention next week's Primary and Backup
+            tag_next_p, ent_next_p = make_mention(next_eng, next_email)
+            tag_next_b, ent_next_b = make_mention(next_backup, next_backup_email)
+            if ent_next_p:
+                mention_entities.append(ent_next_p)
+            if ent_next_b and next_backup != next_eng:
+                mention_entities.append(ent_next_b)
+
             facts = [
                 {"title": "Datum:", "value": today_str},
                 {"title": "Aktuell zuständig:", "value": primary_str},
                 {"title": "Aktuell im Backup:", "value": backup_str},
                 {"title": "Schichtende aktuell:", "value": f"Freitag, {curr_work_end}"},
-                {"title": "Nächste Woche zuständig:", "value": next_primary_str},
-                {"title": "Nächste Woche im Backup:", "value": next_backup_str},
+                {"title": "Nächste Woche zuständig:", "value": tag_next_p},
+                {"title": "Nächste Woche im Backup:", "value": tag_next_b},
                 {"title": "Nächste Schicht:", "value": f"{next_start} – {next_work_end}"},
             ]
             vac_header = "**🌴 Geplante Abwesenheiten für die Folgewoche**"
@@ -787,10 +848,19 @@ class OpsShiftsManager:
             title = "🔄 SRE Betriebsaufgaben: Schichtwechsel"
             subtitle = "Wöchentliche Schichtübergabe"
             accent_color = "warning"
+
+            # Monday / Schichtwechsel: Mention current week's Primary and Backup
+            tag_curr_p, ent_curr_p = make_mention(curr_eng, curr_email)
+            tag_curr_b, ent_curr_b = make_mention(curr_backup, curr_backup_email)
+            if ent_curr_p:
+                mention_entities.append(ent_curr_p)
+            if ent_curr_b and curr_backup != curr_eng:
+                mention_entities.append(ent_curr_b)
+
             facts = [
                 {"title": "Datum:", "value": today_str},
-                {"title": "Primär:", "value": primary_str},
-                {"title": "Backup:", "value": backup_str},
+                {"title": "Primär:", "value": tag_curr_p},
+                {"title": "Backup:", "value": tag_curr_b},
                 {"title": "Aktuelle Schicht:", "value": f"{curr_start} – {curr_work_end}"},
                 {"title": "Folgewoche (Vorschau):", "value": f"{next_primary_str} | {next_backup_str}"},
             ]
@@ -967,18 +1037,24 @@ class OpsShiftsManager:
                 "url": betriebsaufgaben_url,
             })
 
+        adaptive_card_content: Dict[str, Any] = {
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4",
+            "type": "AdaptiveCard",
+            "body": body,
+            "actions": actions,
+        }
+        if mention_entities:
+            adaptive_card_content["msteams"] = {
+                "entities": mention_entities
+            }
+
         card_payload = {
             "type": "message",
             "attachments": [
                 {
                     "contentType": "application/vnd.microsoft.card.adaptive",
-                    "content": {
-                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                        "version": "1.4",
-                        "type": "AdaptiveCard",
-                        "body": body,
-                        "actions": actions,
-                    },
+                    "content": adaptive_card_content,
                 }
             ],
         }
