@@ -57,7 +57,7 @@ team:
     active: true
   - name: "Alicja Konior"
     aliases: ["Alicja", "Konior", "Alicja Aleksandra Konior"]
-    teams_email: "alicja.konior@capgemini.com"
+    teams_email: "alicja-aleksandra.konior@capgemini.com"
     active: true
   - name: "Ralf Nelles"
     aliases: ["Ralf", "Nelles"]
