@@ -1,5 +1,4 @@
 ---
-  # for testing purpose
 version: 3
 images:
   base_image:
