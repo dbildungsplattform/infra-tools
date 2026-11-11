@@ -182,8 +182,9 @@ class OnePwd(object):
     op_command = f"{self.op} {resource} get '{item_name}' {vault_flag} {self._get_session_flag()}"
     return json.loads(run_op_command_in_shell(op_command, service_account_token=self.service_account_token))
 
-  def get_document(self, item_name):
-    op_command = f"{self.op} document get '{item_name}' {self._get_session_flag()}"
+  def get_document(self, item_name, vault=None):
+    vault_flag = get_optional_flag(vault=vault)
+    op_command = f"{self.op} document get '{item_name}' {vault_flag} {self._get_session_flag()}"
     return run_op_command_in_shell(op_command, service_account_token=self.service_account_token)
 
   def create_document_from_file(self, path, title, vault=None):
@@ -463,7 +464,7 @@ def get_single_secret(op: OnePwd, item_name: str, field=None, vault=None) -> str
       if "label" in f and f["label"] == field and "value" in f:
         secret_value = f["value"]
   elif item["category"] == 'DOCUMENT':  # File template type
-    document = op.get_document(item['id'])
+    document = op.get_document(item['id'], vault=vault)
     secret_value = document.replace("\n\n", "\n")
   elif item["category"] == 'API_CREDENTIAL':  # JSON Web Token
     for f in item["fields"]:
