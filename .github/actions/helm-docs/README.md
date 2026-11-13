@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dbildungsplattform/infra-tools/.github/actions/helm-docs@tf-helm-docs-v1
+      - uses: dbildungsplattform/infra-tools/.github/actions/helm-docs@a61954f300fc58b88ba3cbbd30e0386357501d84 # infra-tools-4.4.0
         with: 
           # provide list of dirs to run helm-docs on, separate by comma without a space
           src_path: sample_charts,sample_charts2
