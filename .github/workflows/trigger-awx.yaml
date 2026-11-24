@@ -7,7 +7,7 @@ on:
       awxkit_version:
         description: "Version of awxkit to use"
         required: false
-        default: 23.2.0
+        default: 24.6.1
         type: string
       host:
         description: "The AWX host to trigger"
@@ -53,7 +53,8 @@ on:
 
 jobs:
   run_awx:
-    runs-on: ubuntu-latest
+    # enforce old python version for awxkit compatibility, see https://github.com/ansible/awx/issues/16441#issuecomment-4509992217
+    runs-on: ubuntu-24.04
     steps:
       - name: Create venv and install awxkit
         run: |
