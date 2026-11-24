@@ -1,0 +1,56 @@
+name: Trivy Code Scan
+
+on:
+  workflow_call:
+    inputs:
+      scan-ref:
+        description: Path to scan in the caller repository
+        required: false
+        type: string
+        default: .
+      trivyignores:
+        description: Trivy ignore file path in the caller repository
+        required: false
+        type: string
+        default: .trivyignore.yaml
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    name: Trivy Code Scan (Config)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Run Trivy vulnerability scanner (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          format: sarif
+          output: trivy-config-results.sarif
+          scan-ref: ${{ inputs.scan-ref }}
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
+          trivyignores: ${{ inputs.trivyignores }}
+      - name: Run Trivy vulnerability scanner (table)
+        if: ${{ always() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          format: table
+          scan-ref: ${{ inputs.scan-ref }}
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          trivyignores: ${{ inputs.trivyignores }}
+      - name: Upload Trivy results
+        if: ${{ always() }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: trivy-config-results.sarif
