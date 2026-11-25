@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
   schedule:
     # GitHub Actions schedule cron is evaluated in UTC, so this runs at 02:00 UTC
-    # on the 1st of each month. In Europe/Berlin, the local run time shifts with DST.
-    - cron: "0 2 1 * *"
+    # on sunday each week. In Europe/Berlin, the local run time shifts with DST.
+    # minute hour day month weekday 
+    - cron: "0 2 * * 0"
 
 concurrency:
   group: cron-tools-${{ github.ref }}
