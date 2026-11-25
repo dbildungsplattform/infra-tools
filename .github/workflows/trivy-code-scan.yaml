@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   scan:
-    name: Trivy Code Scan (Config)
+    name: Trivy Code Scan
     runs-on: ubuntu-latest
     steps:
       - name: Checkout caller repository
