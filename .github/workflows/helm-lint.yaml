@@ -9,7 +9,8 @@ on:
         type: string
       tools-ref:
         description: infra-tools ref containing the shared SARIF converter
-        required: true
+        required: false
+        default: main
         type: string
 
 permissions:
