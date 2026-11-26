@@ -21,14 +21,14 @@ permissions:
 jobs:
   helm-lint:
     name: Helm Lint
-    uses: ./.github/workflows/helm-lint.yaml
+    uses: ./.github/workflows/linting-helm-lint.yaml
     with:
       chart-path: ${{ inputs.chart-path }}
       tools-ref: ${{ inputs.tools-ref }}
 
   kubeconform:
     name: Kubeconform
-    uses: ./.github/workflows/kubeconform.yaml
+    uses: ./.github/workflows/linting-kubeconform.yaml
     with:
       chart-path: ${{ inputs.chart-path }}
       tools-ref: ${{ inputs.tools-ref }}
