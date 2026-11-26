@@ -1,0 +1,27 @@
+# central-repo/.github/workflows/stack-kubernetes.yml
+on:
+  workflow_call:
+    inputs:
+      chart-path:
+        type: string
+        default: './charts'
+
+jobs:
+  lint-and-validate:
+    name: Helm & K8s Lint # <-- Clean, single PR check name
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: org/central-repo/actions/helm-lint@v1
+        with:
+          path: ${{ inputs.chart-path }}
+      - uses: org/central-repo/actions/kubeconform@v1
+        with:
+          path: ${{ inputs.chart-path }}
+
+  security-scan:
+    name: Trivy Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
