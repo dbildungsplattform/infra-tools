@@ -1,0 +1,13 @@
+name: CI Gatekeeper
+description: Fails if any upstream needed job failed or was cancelled
+inputs:
+  needs-json:
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        NEEDS_JSON: ${{ inputs.needs-json }}
+      run: |
+        echo "$NEEDS_JSON" | jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")'
