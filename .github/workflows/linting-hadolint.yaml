@@ -1,0 +1,51 @@
+name: Hadolint
+
+on:
+  workflow_call:
+    inputs:
+      dockerfile:
+        description: Path to the Dockerfile
+        required: false
+        type: string
+        default: Dockerfile
+      failure-threshold:
+        description: Minimum severity that causes Hadolint to fail
+        required: false
+        type: string
+        default: warning
+      verbose:
+        description: Enable verbose Hadolint output
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  lint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    env:
+      HADOLINT_SARIF_FILE: hadolint-results.sarif
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e221d575162eba776ba5e5 # v3.3.0
+        with:
+          dockerfile: ${{ inputs.dockerfile }}
+          failure-threshold: ${{ inputs.failure-threshold }}
+          output-file: ${{ env.HADOLINT_SARIF_FILE }}
+          format: sarif
+          verbose: ${{ inputs.verbose }}
+
+      - name: Upload Hadolint results
+        if: ${{ always() }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: ${{ env.HADOLINT_SARIF_FILE }}
