@@ -1,0 +1,34 @@
+name: Helm
+
+on:
+  workflow_call:
+    inputs:
+      chart-path:
+        description: Path to the Helm chart in the caller repository
+        required: true
+        type: string
+      tools-ref:
+        description: infra-tools ref containing the reusable workflows and SARIF converters
+        required: false
+        default: main
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  helm-lint:
+    name: Helm Lint
+    uses: ./.github/workflows/linting-helm-lint.yaml
+    with:
+      chart-path: ${{ inputs.chart-path }}
+      tools-ref: ${{ inputs.tools-ref }}
+
+  kubeconform:
+    name: Kubeconform
+    uses: ./.github/workflows/linting-kubeconform.yaml
+    with:
+      chart-path: ${{ inputs.chart-path }}
+      tools-ref: ${{ inputs.tools-ref }}
